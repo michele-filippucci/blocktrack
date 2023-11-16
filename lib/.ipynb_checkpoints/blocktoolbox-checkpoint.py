@@ -2,6 +2,7 @@
 ______________________________________
 //////////////        \\\\\\\\\\\\\\\\
 ////////                     \\\\\\\\\
+<<<<<<< HEAD
 ||||||||  BLOCKTRACK LIBRARY  ||||||||
 \\\\\\\\_____          ______/////////
 \\\\\\\\\\\\\\________////////////////
@@ -11,6 +12,18 @@ With the help and avice of: Paolo Davini, CNR-Isac
 
 This library is a set of tools for the analysis of atmospheric blocking in the northern hemisphere.
 The index used for atm blocking diagnostic is described in "Davini et al. - 2012 - Bidimensional diagnostics, variability, and trends of northern hemisphere blocking". Some differences and features are added: the persistence and area criteriamare applied at the level of tracking. Tracking also allow the user to perform lagrangian analysis.
+=======
+||||||||  TRACKBLOCK LIBRARY  ||||||||
+\\\\\\\\_____          ______/////////
+\\\\\\\\\\\\\\________////////////////
+
+Author: Michele Filippucci on intership at ISAC-CNR (TO)
+
+This library is a set of tools for the analysis of atmospheric blocking in the northern hemisphere.
+The index used for atm blocking diagnostic is described in "Davini et al. - 2012 - Bidimensional diagnostics, variability, and 
+trends of northern hemisphere blocking". Some differences and features are added: the persistence and area criteria
+are applied at the level of tracking. Tracking also allow the user to perform lagrangian analysis.
+>>>>>>> a3f0dfb03a84e9933b43d201f32f2e8675c8628e
 
 This library was developed using daily datasets.
 
@@ -120,6 +133,12 @@ grid: grid dimension needed to convert the index in latitudes and longitudes.
 _/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/
 """
 
+<<<<<<< HEAD
+=======
+
+
+
+>>>>>>> a3f0dfb03a84e9933b43d201f32f2e8675c8628e
 import numpy as np
 import xarray as xr
 from scipy.ndimage.measurements import label
@@ -129,6 +148,12 @@ import matplotlib.pyplot as plt
 import cartopy.util as cutil
 import sys
 import math
+<<<<<<< HEAD
+=======
+# generate random integer values
+from random import seed
+from random import randint
+>>>>>>> a3f0dfb03a84e9933b43d201f32f2e8675c8628e
 
 np.set_printoptions(precision=2,threshold=np.inf)
 
@@ -464,7 +489,10 @@ def ContourTracking2D(dataset,fn_out = "",var_name = "DAV",data_return = False, 
     TRACKING IN TIME
     """
     if t > 0:
+<<<<<<< HEAD
       diff = times[t]-times[t-1]
+=======
+>>>>>>> a3f0dfb03a84e9933b43d201f32f2e8675c8628e
       lbl = 1
       bool1 = arr[t-1,:,:] > 0
       bool2 = arr[t,:,:] > 0
@@ -474,6 +502,10 @@ def ContourTracking2D(dataset,fn_out = "",var_name = "DAV",data_return = False, 
         boolarr1 = arr[t-1,:,:] == l1
         for l2 in comp2:
           #first we use a filter for avoiding lagrangian tracking between distant days
+<<<<<<< HEAD
+=======
+          diff = times[t]-times[t-1]
+>>>>>>> a3f0dfb03a84e9933b43d201f32f2e8675c8628e
           diff = int(diff)
           diff = diff/(1e9*60*60*24) #conversion from ms to days
           if diff > 1:
