@@ -405,7 +405,8 @@ def ContourTracking3D(dataset,fn_out = "",var_name = "pIB_boolean",data_return =
   else:
     return 0
 
-def ContourTracking2D(dataset,fn_out = "",var_name = "DAV",data_return = False, pers = 0,min_area = 500000,max_length=28):
+def ContourTracking2D(dataset,fn_out = "",var_name = "DAV",data_return = False, pers = 0,min_area = 500000,max_length=28,
+                      char_dictionary = False, fn_dic = ''):
   if fn_out=="" and data_return==False:
     string = "Specify the kind of output you want"
     print(string)
@@ -415,6 +416,9 @@ def ContourTracking2D(dataset,fn_out = "",var_name = "DAV",data_return = False, 
   except:
     print("Error Code 1: dataset not valid. The variable " + var_name + " cannot be found")
     return 1
+  
+  if char_dictionary == True:
+    dic = []
   
   print("__Starting a Tracking process__")
   print("input: " + var_name + ", pers = " + str(pers))
@@ -534,9 +538,8 @@ def ContourTracking2D(dataset,fn_out = "",var_name = "DAV",data_return = False, 
   dataset["DAV_tracked"] = DAV_tracked
   
   """
-  Update DAV and DAV_freq (if present) after area and persistence filter are applied.
+  Update DAV_freq (if present) after area and persistence filter are applied.
   """
-  dataset[var_name] = DAV_tracked > 0
   dataset[var_name + "_freq"] = dataset[var_name].mean(dim="time")
 
   #output data
@@ -547,3 +550,190 @@ def ContourTracking2D(dataset,fn_out = "",var_name = "DAV",data_return = False, 
     return dataset
   else:
     return 0
+
+
+'''
+THIS IS A NEW VERSION OF THE CONTOUR TRACKING FUNCTION THAT ALLOWS TO STORE INFORMATION ON THE FILTERS EFFECT INTO A
+DICTIONARY OBJECT.
+'''  
+
+def ContourTracking2D_new(dataset,fn_out = "",var_name = "DAV",data_return = False, pers = 0,min_area = 500000,max_length=28,fn_dic_unfiltered = '', fn_dic = ''):
+  if fn_out=="" and data_return==False:
+    string = "Specify the kind of output you want"
+    print(string)
+    return 0
+  try:
+    pIB_boolean = dataset[var_name]
+    #initialize the array for performing the tracking
+    arr = pIB_boolean.values
+  except:
+    print("Error Code 1: dataset not valid. The variable " + var_name + " cannot be found")
+    return 1
+  
+  #initialiazing a blocking characteristics dictionary
+  dic = []
+
+  print("__Starting a Tracking process__")
+  print("input: " + var_name + ", pers = " + str(pers))
+
+  #loop over time
+  #initialize some varaibles
+  max = 0
+  times = dataset.time.values
+  #store the lat and lon dimensions for later computations.
+  #more robust than arr.shape, as the order of coordinates may vary
+  lastlat = len(dataset.lat.values) -1
+  lastlon = len(dataset.lon.values) -1
+  print("connected component analysis")
+  for t in tqdm(np.arange(0,len(times)-1)):
+    if t > 0:
+      tmp = np.amax(arr[t-1,:,:])
+      if max < tmp: #update maximum value in matrix
+        max = tmp
+    #label method from scipy.ndimage.measurements is used
+    structure = [[0,1,0],\
+                 [1,1,1],\
+                 [0,1,0]] #this matrix defines what is defined as neighbour
+
+    #neighbour points are labeled with the same sequential number
+    arr[t,:,:],ncomponents=label(arr[t,:,:],structure)
+    arr[t,:,:] = xr.where(arr[t,:,:] > 0, arr[t,:,:] + max , arr[t,:,:])
+
+    #making it periodic in longitude
+    for j in range(0,lastlat):
+      if arr[t,j,lastlon] > 0 and arr[t,j,0] > 0:
+        arr[t,:,:] = np.where(arr[t,:,:] == arr[t,j,lastlon], arr[t,j,0], arr[t,:,:])
+
+    """
+    TRACKING IN TIME
+    """
+    if t > 0:
+      diff = times[t]-times[t-1]
+      lbl = 1
+      bool1 = arr[t-1,:,:] > 0
+      bool2 = arr[t,:,:] > 0
+      comp1 = np.unique(arr[t-1,bool1])
+      comp2 = np.unique(arr[t,bool2])
+      for l1 in comp1:
+        boolarr1 = arr[t-1,:,:] == l1
+        for l2 in comp2:
+          #first we use a filter for avoiding lagrangian tracking between distant days
+          diff = int(diff)
+          diff = diff/(1e9*60*60*24) #conversion from ms to days
+          if diff > 1:
+            break
+          #then we find link between clusters
+          boolarr2 = arr[t,:,:] == l2
+          boolarr = boolarr1*boolarr2
+          n = np.count_nonzero(boolarr)
+          n_ex = np.count_nonzero(boolarr1)
+          n_new = np.count_nonzero(boolarr2)
+          if n > n_ex/2 or n > n_new/2: #50% overlap
+            #new label which is always different
+            arr[t,:,:] = xr.where(boolarr2,l1,arr[t,:,:])
+        if diff > 1:
+          break
+
+  print('rearranging indexes')
+  arr[:,:,:] = OrderIndexes(arr[:,:,:])
+  #create a dictionary where the number of items is equal to the number of labels
+  for l in np.unique(arr):
+    dic.append({})
+
+  #compute blocking events characteristics
+  """
+  FILTERS MODULE
+  """
+  #initialize dictionary
+  for l in np.unique(arr).astype(int):
+    dic[l]['persistence'] = 0
+    dic[l]['avg_area'] = 0
+    dic[l]['longitudinal_extent'] = 0
+
+  print('calculating characteristics')
+  print('persistence:')
+  #PERSISTENCE MODULE
+  for t in tqdm(np.arange(0,len(times)-1)):
+    bool = arr[t,:,:] > 0
+    today_events = np.unique(arr[t,bool]).astype(int) #labels at day t
+    for l in today_events:
+      dic[l]['persistence'] += 1
+
+  print('area and longitudinal extent')
+  #AREA and LONGITUDINAL EXTENT MODULE
+  for t in tqdm(np.arange(0,len(times)-1)):
+    bool = arr[t,:,:] > 0
+    today_events = np.unique(arr[t,bool]).astype(int)
+    for l in today_events:
+      boolarr = arr[t,:,:] == l
+      area = Area(arr[t,:,:],boolarr)
+      length = 0
+      for i in range(boolarr.shape[1]):
+        if np.any(boolarr[:,i]):
+          length += 1
+      #updating extent
+      dic[l]['longitudinal_extent'] += length*2.5/dic[l]['persistence'] 
+      #updating area
+      dic[l]['avg_area'] += area/dic[l]['persistence'] 
+
+  #save dictionary
+  if fn_dic_unfiltered != '':
+    np.save(fn_dic_unfiltered,dic)
+
+  print('applying filters')
+  to_pop = []
+  to_retain = []
+  l = 0
+  for event in tqdm(dic):
+    if event['persistence'] < pers or event['avg_area'] < min_area or event['longitudinal_extent'] > max_length:
+      to_pop.append(l)
+      arr = np.where(arr==l,0,arr)
+    else:
+      to_retain.append(l)
+    l+=1 #didn't use enumerate to use the progress bar.
+
+  #didn't find another way to update the dictionary. It is a bit strange
+  dic_filtered = []
+  for l,event in enumerate(dic):
+    if l in to_retain:
+      dic_filtered.append(event)
+
+  print('rearranging indexes')
+  arr = OrderIndexes(arr)
+
+  #save dictionary
+  if fn_dic != '':
+    np.save(fn_dic,dic_filtered)
+
+  print("number of labels: " + str(np.amax(arr)))
+
+  #initialize coords for new .nc
+  times = pIB_boolean.coords["time"].values
+  lon = pIB_boolean.coords["lon"].values
+  lat = pIB_boolean.coords["lat"].values
+
+  #initialize dataset object for the new .nc
+  DAV_tracked = xr.DataArray(0,coords=[times,lat,lon],dims = pIB_boolean.dims)
+  DAV_tracked[:,:,:] = arr
+
+  #assign new data_array to dataset
+  dataset["DAV_tracked"] = DAV_tracked
+  
+  """
+  Update DAV_freq (if present) after area and persistence filter are applied.
+  """
+  dataset[var_name + "_freq"] = xr.where(dataset['DAV_tracked']>0,1,0).mean(dim="time")
+
+  #output data
+  if data_return == False:
+    print("saving netcdf in: " + fn_out)
+    dataset.to_netcdf(fn_out)
+  if data_return == True:
+    return dataset
+  else:
+    return 0
+
+
+
+
+
