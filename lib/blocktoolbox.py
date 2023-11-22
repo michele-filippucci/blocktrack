@@ -152,7 +152,7 @@ def Area(arr,boolarr,lats=[0,90],lons=[-180,180],grid=2.5):
   for ilon in range(len(arr[0,:])):
     for jlat in range(len(arr[:,0])):
       if boolarr[jlat,ilon] == True:
-        area += np.cos((lats[0] + jlat*grid)*(math.pi/360))*(2.5*circearth/360)**2
+        area += np.cos(np.deg2rad(lats[0] + jlat*grid))*(grid*circearth/360)**2
         
   return area
   
@@ -557,7 +557,9 @@ THIS IS A NEW VERSION OF THE CONTOUR TRACKING FUNCTION THAT ALLOWS TO STORE INFO
 DICTIONARY OBJECT.
 '''  
 
-def ContourTracking2D_new(dataset,fn_out = "",var_name = "DAV",data_return = False, pers = 0,min_area = 500000,max_length=28,fn_dic_unfiltered = '', fn_dic = ''):
+def ContourTracking2D_new(dataset,fn_out = "",var_name = "DAV",data_return = False,
+                          filters=True,pers = 4,min_area = 500000,max_length=28,
+                          save_track = True, fn_dic_unfiltered = '', fn_dic = ''):
   if fn_out=="" and data_return==False:
     string = "Specify the kind of output you want"
     print(string)
@@ -648,15 +650,28 @@ def ContourTracking2D_new(dataset,fn_out = "",var_name = "DAV",data_return = Fal
   for l in np.unique(arr).astype(int):
     dic[l]['persistence'] = 0
     dic[l]['avg_area'] = 0
-    dic[l]['longitudinal_extent'] = 0
-
+    dic[l]['avg_aspect_ratio'] = 0
+    dic[l]['distance_traveled'] = 0
+    dic[l]['track'] = []
+    dic[l]['date'] = ''
   print('calculating characteristics')
-  print('persistence:')
+  print('persistence, track, date:')
   #PERSISTENCE MODULE
+  past_events = []
   for t in tqdm(np.arange(0,len(times)-1)):
     bool = arr[t,:,:] > 0
     today_events = np.unique(arr[t,bool]).astype(int) #labels at day t
     for l in today_events:
+      if l not in past_events:
+        past_events.append(l)
+        if save_track == True:
+          dic[l]['track'] = CenterofMass(arr[t:,:,:],l,grid=2.5) #center of mass traj
+          xs,ys = dic[l]['track']
+          dist = 0
+          for i in range(len(xs)-1):
+            dist += ((xs[i+1]-xs[i])**2 + (ys[i+1]-ys[i])**2)**0.5
+          dic[l]['distance_traveled'] = dist
+          dic[l]['date'] = times[t]
       dic[l]['persistence'] += 1
 
   print('area and longitudinal extent')
@@ -667,12 +682,16 @@ def ContourTracking2D_new(dataset,fn_out = "",var_name = "DAV",data_return = Fal
     for l in today_events:
       boolarr = arr[t,:,:] == l
       area = Area(arr[t,:,:],boolarr)
-      length = 0
+      lon_ext = 0
       for i in range(boolarr.shape[1]):
         if np.any(boolarr[:,i]):
-          length += 1
+          lon_ext += 1
+      lat_ext = 0
+      for i in range(boolarr.shape[0]):
+        if np.any(boolarr[i,:]):
+          lat_ext += 1
       #updating extent
-      dic[l]['longitudinal_extent'] += length*2.5/dic[l]['persistence'] 
+      dic[l]['avg_aspect_ratio'] += (lon_ext/lat_ext)/dic[l]['persistence'] 
       #updating area
       dic[l]['avg_area'] += area/dic[l]['persistence'] 
 
@@ -684,13 +703,17 @@ def ContourTracking2D_new(dataset,fn_out = "",var_name = "DAV",data_return = Fal
   to_pop = []
   to_retain = []
   l = 0
-  for event in tqdm(dic):
-    if event['persistence'] < pers or event['avg_area'] < min_area or event['longitudinal_extent'] > max_length:
-      to_pop.append(l)
-      arr = np.where(arr==l,0,arr)
-    else:
-      to_retain.append(l)
-    l+=1 #didn't use enumerate to use the progress bar.
+  if filters == True:
+    for event in tqdm(dic):
+      if event['persistence'] < pers_min or event['persistence'] > pers_max or event['avg_area'] < min_area or event['longitudinal_extent'] > max_length:
+        to_pop.append(l)
+        arr = np.where(arr==l,0,arr)
+      else:
+        to_retain.append(l)
+      l+=1 #didn't use enumerate to use the progress bar.
+  else:
+    print('no filters!')
+    to_retain = range(1,len(dic)+1) #all the labels
 
   #didn't find another way to update the dictionary. It is a bit strange
   dic_filtered = []
