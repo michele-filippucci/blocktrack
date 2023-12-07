@@ -558,7 +558,7 @@ DICTIONARY OBJECT.
 '''  
 
 def ContourTracking2D_new(dataset,fn_out = "",var_name = "DAV",data_return = False,
-                          filters=True,pers = 4,min_area = 500000,max_length=28,
+                          filters=True,pers_min = 5,pers_max = 25,min_area = 500000,max_area=4e6,max_ar=5,
                           save_track = True, fn_dic_unfiltered = '', fn_dic = ''):
   if fn_out=="" and data_return==False:
     string = "Specify the kind of output you want"
@@ -576,7 +576,7 @@ def ContourTracking2D_new(dataset,fn_out = "",var_name = "DAV",data_return = Fal
   dic = []
 
   print("__Starting a Tracking process__")
-  print("input: " + var_name + ", pers = " + str(pers))
+  print("input: " + var_name)
 
   #loop over time
   #initialize some varaibles
@@ -642,91 +642,100 @@ def ContourTracking2D_new(dataset,fn_out = "",var_name = "DAV",data_return = Fal
   for l in np.unique(arr):
     dic.append({})
 
-  #compute blocking events characteristics
-  """
-  FILTERS MODULE
-  """
-  #initialize dictionary
-  for l in np.unique(arr).astype(int):
-    dic[l]['persistence'] = 0
-    dic[l]['avg_area'] = 0
-    dic[l]['avg_aspect_ratio'] = 0
-    dic[l]['distance_traveled'] = 0
-    dic[l]['track'] = []
-    dic[l]['date'] = ''
-  print('calculating characteristics')
-  print('persistence, track, date:')
-  #PERSISTENCE MODULE
-  past_events = []
-  for t in tqdm(np.arange(0,len(times)-1)):
-    bool = arr[t,:,:] > 0
-    today_events = np.unique(arr[t,bool]).astype(int) #labels at day t
-    for l in today_events:
-      if l not in past_events:
-        past_events.append(l)
-        if save_track == True:
-          dic[l]['track'] = CenterofMass(arr[t:,:,:],l,grid=2.5) #center of mass traj
-          xs,ys = dic[l]['track']
-          dist = 0
-          for i in range(len(xs)-1):
-            dist += ((xs[i+1]-xs[i])**2 + (ys[i+1]-ys[i])**2)**0.5
-          dic[l]['distance_traveled'] = dist
-          dic[l]['date'] = times[t]
-      dic[l]['persistence'] += 1
-
-  print('area and longitudinal extent')
-  #AREA and LONGITUDINAL EXTENT MODULE
-  for t in tqdm(np.arange(0,len(times)-1)):
-    bool = arr[t,:,:] > 0
-    today_events = np.unique(arr[t,bool]).astype(int)
-    for l in today_events:
-      boolarr = arr[t,:,:] == l
-      area = Area(arr[t,:,:],boolarr)
-      lon_ext = 0
-      for i in range(boolarr.shape[1]):
-        if np.any(boolarr[:,i]):
-          lon_ext += 1
-      lat_ext = 0
-      for i in range(boolarr.shape[0]):
-        if np.any(boolarr[i,:]):
-          lat_ext += 1
-      #updating extent
-      dic[l]['avg_aspect_ratio'] += (lon_ext/lat_ext)/dic[l]['persistence'] 
-      #updating area
-      dic[l]['avg_area'] += area/dic[l]['persistence'] 
-
-  #save dictionary
-  if fn_dic_unfiltered != '':
-    np.save(fn_dic_unfiltered,dic)
-
-  print('applying filters')
-  to_pop = []
-  to_retain = []
-  l = 0
   if filters == True:
-    for event in tqdm(dic):
-      if event['persistence'] < pers_min or event['persistence'] > pers_max or event['avg_area'] < min_area or event['longitudinal_extent'] > max_length:
-        to_pop.append(l)
-        arr = np.where(arr==l,0,arr)
-      else:
-        to_retain.append(l)
-      l+=1 #didn't use enumerate to use the progress bar.
-  else:
-    print('no filters!')
-    to_retain = range(1,len(dic)+1) #all the labels
+    #compute blocking events characteristics
+    """
+    FILTERS MODULE
+    """
+    #initialize dictionary
+    for l in np.unique(arr).astype(int):
+      dic[l]['persistence'] = 0
+      dic[l]['avg_area'] = 0
+      dic[l]['avg_aspect_ratio'] = 0
+      dic[l]['distance_traveled'] = 0
+      dic[l]['track'] = []
+      dic[l]['date'] = ''
+    print('calculating characteristics')
+    print('persistence, track, date:')
+    #PERSISTENCE MODULE
+    past_events = []
+    for t in tqdm(np.arange(0,len(times)-1)):
+      bool = arr[t,:,:] > 0
+      today_events = np.unique(arr[t,bool]).astype(int) #labels at day t
+      for l in today_events:
+        if l not in past_events:
+          past_events.append(l)
+          if save_track == True:
+            dic[l]['track'] = CenterofMass(arr[t:,:,:],l,grid=2.5) #center of mass traj
+            xs,ys = dic[l]['track']
+            dist = 0
+            for i in range(len(xs)-1):
+              dist += ((xs[i+1]-xs[i])**2 + (ys[i+1]-ys[i])**2)**0.5
+            dic[l]['distance_traveled'] = dist
+            dic[l]['date'] = times[t]
+        dic[l]['persistence'] += 1
 
-  #didn't find another way to update the dictionary. It is a bit strange
-  dic_filtered = []
-  for l,event in enumerate(dic):
-    if l in to_retain:
-      dic_filtered.append(event)
+    print('area and longitudinal extent')
+    #AREA and LONGITUDINAL EXTENT MODULE
+    for t in tqdm(np.arange(0,len(times)-1)):
+      bool = arr[t,:,:] > 0
+      today_events = np.unique(arr[t,bool]).astype(int)
+      for l in today_events:
+        boolarr = arr[t,:,:] == l
+        area = Area(arr[t,:,:],boolarr)
+        lon_ext = 0
+        for i in range(boolarr.shape[1]):
+          if np.any(boolarr[:,i]):
+            lon_ext += 1
+        lat_ext = 0
+        for i in range(boolarr.shape[0]):
+          if np.any(boolarr[i,:]):
+            lat_ext += 1
+        #updating aspect_ratio
+        lat_pos = sum(dic[l]['track'][0])/len(dic[l]['track'][0])
+        #print(lon_ext)
+        #print(np.cos(np.deg2rad(lat_pos)))
+        dic[l]['avg_aspect_ratio'] += ((lon_ext*np.cos(np.deg2rad(lat_pos)))/lat_ext)/dic[l]['persistence']#the longitudinal dimension of a single grid diminuish with the latitude
+        '''
+        if dic[l]['avg_aspect_ratio'] < (lon_ext/lat_ext):
+          dic[l]['avg_aspect_ratio'] = (lon_ext/lat_ext)
+        '''
+        #updating area
+        dic[l]['avg_area'] += area/dic[l]['persistence'] 
 
-  print('rearranging indexes')
-  arr = OrderIndexes(arr)
+    #save dictionary
+    if fn_dic_unfiltered != '':
+      np.save(fn_dic_unfiltered,dic)
 
-  #save dictionary
-  if fn_dic != '':
-    np.save(fn_dic,dic_filtered)
+    print('applying filters')
+    to_pop = []
+    to_retain = []
+    l = 0
+    if filters == True:
+      for event in tqdm(dic):
+        if event['persistence'] < pers_min or event['persistence'] > pers_max or event['avg_area'] < min_area or event['avg_area'] > max_area or event['avg_aspect_ratio'] > max_ar:
+          to_pop.append(l)
+          #I should find a better way to do this, as it isn't efficient at all. For example I could use the time information stored in the dictionary
+          arr = np.where(arr==l,0,arr)
+        else:
+          to_retain.append(l)
+        l+=1 #didn't use enumerate to use the progress bar.
+    else:
+      print('no filters!')
+      to_retain = range(1,len(dic)+1) #all the labels
+
+    #didn't find another way to update the dictionary. It is a bit strange
+    dic_filtered = []
+    for l,event in enumerate(dic):
+      if l in to_retain:
+        dic_filtered.append(event)
+
+    print('rearranging indexes')
+    arr = OrderIndexes(arr)
+
+    #save dictionary
+    if fn_dic != '':
+      np.save(fn_dic,dic_filtered)
 
   print("number of labels: " + str(np.amax(arr)))
 
