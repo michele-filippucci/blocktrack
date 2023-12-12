@@ -405,161 +405,9 @@ def ContourTracking3D(dataset,fn_out = "",var_name = "pIB_boolean",data_return =
   else:
     return 0
 
-def ContourTracking2D(dataset,fn_out = "",var_name = "DAV",data_return = False, pers = 0,min_area = 500000,max_length=28,
-                      char_dictionary = False, fn_dic = ''):
-  if fn_out=="" and data_return==False:
-    string = "Specify the kind of output you want"
-    print(string)
-    return 0
-  try:
-    pIB_boolean = dataset[var_name]
-  except:
-    print("Error Code 1: dataset not valid. The variable " + var_name + " cannot be found")
-    return 1
-  
-  if char_dictionary == True:
-    dic = []
-  
-  print("__Starting a Tracking process__")
-  print("input: " + var_name + ", pers = " + str(pers))
 
-  #loop over time
-  max = 0
-  lastlat = len(dataset.lat.values) -1
-  lastlon = len(dataset.lon.values) -1
-  times = dataset.time.values
-  print("connected component analysis")
-  for t in tqdm(np.arange(0,len(times)-1)):
-    if t > 0:
-      tmp = np.amax(arr[t-1,:,:])
-      if max < tmp: #update maximum value in matrix
-        max = tmp
-    arr = pIB_boolean.values[:,:,:]
-    #label method from scipy.ndimage.measurements is used
-    structure = [[0,1,0],\
-                 [1,1,1],\
-                 [0,1,0]] #this matrix defines what is defined as neighbour
-
-    #neighbour points are labeled with the same sequential number
-    arr[t,:,:],ncomponents=label(arr[t,:,:],structure)
-    arr[t,:,:] = xr.where(arr[t,:,:] > 0, arr[t,:,:] + max , arr[t,:,:])
-
-    #making it periodic in longitude
-    for j in range(0,lastlat):
-      if arr[t,j,lastlon] > 0 and arr[t,j,0] > 0:
-        arr[t,:,:] = xr.where(arr[t,:,:] == arr[t,j,lastlon], arr[t,j,0], arr[t,:,:])
-
-    #applying some filters
-    bool = arr[t,:,:] > 0
-    comp = np.unique(arr[t,bool])
-    for l in comp:
-      boolarr = arr[t,:,:] == l
-      length = 0
-      for i in range(boolarr.shape[1]):
-        if np.any(boolarr[:,i]):
-          length += 1
-      area = Area(arr[t,:,:],boolarr)
-      #filtering cluster dimension
-      if area < min_area or length > max_length: 
-        #the minimum area value has been chosen looking at present litterature
-        #the maxmimum length has been set to 60 degrees, hence 24 cells with 2.5 deg resolution.
-        arr[t,:,:] = xr.where(boolarr, 0,arr[t,:,:])
-    """
-    TRACKING IN TIME
-    """
-    if t > 0:
-      diff = times[t]-times[t-1]
-      lbl = 1
-      bool1 = arr[t-1,:,:] > 0
-      bool2 = arr[t,:,:] > 0
-      comp1 = np.unique(arr[t-1,bool1])
-      comp2 = np.unique(arr[t,bool2])
-      for l1 in comp1:
-        boolarr1 = arr[t-1,:,:] == l1
-        for l2 in comp2:
-          #first we use a filter for avoiding lagrangian tracking between distant days
-          diff = int(diff)
-          diff = diff/(1e9*60*60*24) #conversion from ms to days
-          if diff > 1:
-            break
-          #then we find link between clusters
-          boolarr2 = arr[t,:,:] == l2
-          boolarr = boolarr1*boolarr2
-          n = np.count_nonzero(boolarr)
-          n_ex = np.count_nonzero(boolarr1)
-          n_new = np.count_nonzero(boolarr2)
-          if n > n_ex/2 or n > n_new/2: #50% overlap
-            #new label which is always different
-            arr[t,:,:] = xr.where(boolarr2,l1,arr[t,:,:])
-        if diff > 1:
-          break
-
-  arr[:,:,:] = OrderIndexes(arr[:,:,:])
-
-  """
-  PERSISTENCE MODULE
-  """
-  if pers > 0:
-    counter = 0
-    safe = []
-    print("persistence analysis")
-    for t in tqdm(np.arange(0,len(dataset.time.values))):
-      bool1 = arr[t,:,:] > 0
-      try:
-        bool2 = arr[t+pers,:,:] > 0
-      except:
-        arr[t:,:,:] = 0 #not possible to check so out of output
-        print("exited with " + str(len(dataset.time.values)-t-pers) + " elements remaining")
-        print(str(counter) + " blocking events where found")
-        break
-      comp1 = np.unique(arr[t,bool1]) #labels at day t
-      comp2 = np.unique(arr[t+pers,bool2]) #labels at day t+pers
-      for l1 in comp1:
-        if not l1 in safe:
-          if not l1 in comp2: #if pers days after there is no l1 the event is deleted
-            arr[:,:,:] = xr.where(arr[:,:,:]==l1,0,arr[:,:,:])
-          else:
-            safe.append(l1) #if pers days after there is l1 the event is saved
-            counter += 1
-  print("ordering indexes")
-  arr = OrderIndexes(arr)
-  print("number of labels: " + str(np.amax(arr)))
-
-  #initialize coords for new .nc
-  times = pIB_boolean.coords["time"].values
-  lon = pIB_boolean.coords["lon"].values
-  lat = pIB_boolean.coords["lat"].values
-
-  #initialize dataset object for the new .nc
-  DAV_tracked = xr.DataArray(0,coords=[times,lat,lon],dims = pIB_boolean.dims)
-  DAV_tracked[:,:,:] = arr
-
-  #assign new data_array to dataset
-  dataset["DAV_tracked"] = DAV_tracked
-  
-  """
-  Update DAV_freq (if present) after area and persistence filter are applied.
-  """
-  dataset[var_name + "_freq"] = dataset[var_name].mean(dim="time")
-
-  #output data
-  if data_return == False:
-    print("saving netcdf in: " + fn_out)
-    dataset.to_netcdf(fn_out)
-  if data_return == True:
-    return dataset
-  else:
-    return 0
-
-
-'''
-THIS IS A NEW VERSION OF THE CONTOUR TRACKING FUNCTION THAT ALLOWS TO STORE INFORMATION ON THE FILTERS EFFECT INTO A
-DICTIONARY OBJECT.
-'''  
-
-def ContourTracking2D_new(dataset,fn_out = "",var_name = "DAV",data_return = False,
-                          filters=True,pers_min = 5,pers_max = 25,min_area = 500000,max_area=4e6,max_ar=5,
-                          save_track = True, fn_dic_unfiltered = '', fn_dic = ''):
+def ContourTracking2D(dataset,fn_out = "",var_name = "DAV",data_return = False,
+                      char_dic=True,save_track = True, fn_dic= ''):
   if fn_out=="" and data_return==False:
     string = "Specify the kind of output you want"
     print(string)
@@ -642,7 +490,7 @@ def ContourTracking2D_new(dataset,fn_out = "",var_name = "DAV",data_return = Fal
   for l in np.unique(arr):
     dic.append({})
 
-  if filters == True:
+  if char_dic == True:
     #compute blocking events characteristics
     """
     FILTERS MODULE
@@ -693,49 +541,12 @@ def ContourTracking2D_new(dataset,fn_out = "",var_name = "DAV",data_return = Fal
             lat_ext += 1
         #updating aspect_ratio
         lat_pos = sum(dic[l]['track'][0])/len(dic[l]['track'][0])
-        #print(lon_ext)
-        #print(np.cos(np.deg2rad(lat_pos)))
         dic[l]['avg_aspect_ratio'] += ((lon_ext*np.cos(np.deg2rad(lat_pos)))/lat_ext)/dic[l]['persistence']#the longitudinal dimension of a single grid diminuish with the latitude
-        '''
-        if dic[l]['avg_aspect_ratio'] < (lon_ext/lat_ext):
-          dic[l]['avg_aspect_ratio'] = (lon_ext/lat_ext)
-        '''
         #updating area
         dic[l]['avg_area'] += area/dic[l]['persistence'] 
 
     #save dictionary
-    if fn_dic_unfiltered != '':
-      np.save(fn_dic_unfiltered,dic)
-
-    print('applying filters')
-    to_pop = []
-    to_retain = []
-    l = 0
-    if filters == True:
-      for event in tqdm(dic):
-        if event['persistence'] < pers_min or event['persistence'] > pers_max or event['avg_area'] < min_area or event['avg_area'] > max_area or event['avg_aspect_ratio'] > max_ar:
-          to_pop.append(l)
-          #I should find a better way to do this, as it isn't efficient at all. For example I could use the time information stored in the dictionary
-          arr = np.where(arr==l,0,arr)
-        else:
-          to_retain.append(l)
-        l+=1 #didn't use enumerate to use the progress bar.
-    else:
-      print('no filters!')
-      to_retain = range(1,len(dic)+1) #all the labels
-
-    #didn't find another way to update the dictionary. It is a bit strange
-    dic_filtered = []
-    for l,event in enumerate(dic):
-      if l in to_retain:
-        dic_filtered.append(event)
-
-    print('rearranging indexes')
-    arr = OrderIndexes(arr)
-
-    #save dictionary
-    if fn_dic != '':
-      np.save(fn_dic,dic_filtered)
+    np.save(fn_dic,dic)
 
   print("number of labels: " + str(np.amax(arr)))
 
@@ -766,6 +577,77 @@ def ContourTracking2D_new(dataset,fn_out = "",var_name = "DAV",data_return = Fal
     return 0
 
 
+def FilterEvents(ds,fn_dic='',fn_out = "",fn_dic_out="",var_name = "DAV_tracked",data_return = False,
+                  pers_min = 5,pers_max = 25,min_area = 500000,max_area=4e6,max_ar=5):
+
+  print("__Starting a Filtering process__")
+  print("input: " + var_name)
+
+  try:
+    pIB_boolean = ds[var_name]
+    #initialize the array for performing the tracking
+    arr = pIB_boolean.values
+  except:
+    print("Error Code 1: dataset not valid. The variable " + var_name + " cannot be found")
+    return 1
+
+  #import dictionary
+  dic = np.load(fn_dic,allow_pickle=True)
+
+  print('applying filters')
+  to_pop = []
+  to_retain = []
+  l = 0
+  for event in tqdm(dic):
+    if event['persistence'] < pers_min or event['persistence'] > pers_max or event['avg_area'] < min_area or event['avg_area'] > max_area or event['avg_aspect_ratio'] > max_ar:
+      to_pop.append(l)
+      #I should find a better way to do this, as it isn't efficient at all. For example I could use the time information stored in the dictionary
+      arr = np.where(arr==l,0,arr)
+    else:
+      to_retain.append(l)
+    l+=1 #didn't use enumerate to use the progress bar.
+
+
+  #didn't find another way to update the dictionary. It is a bit strange
+  dic_filtered = []
+  for l,event in enumerate(dic):
+    if l in to_retain:
+      dic_filtered.append(event)
+
+  print('rearranging indexes')
+  arr = OrderIndexes(arr)
+
+  #save dictionary
+  if fn_dic != '':
+    np.save(fn_dic,dic_filtered)
+
+  print("number of labels: " + str(np.amax(arr)))
+
+  #initialize coords for new .nc
+  times = ds["time"].values
+  lon = ds["lon"].values
+  lat = ds["lat"].values
+
+  #initialize dataset object for the new .nc
+  DAV_tracked = xr.DataArray(0,coords=[times,lat,lon],dims = pIB_boolean.dims)
+  DAV_tracked[:,:,:] = arr
+
+  #assign new data_array to dataset
+  ds["DAV_tracked"] = DAV_tracked
+  
+  """
+  Update DAV_freq (if present) after area and persistence filter are applied.
+  """
+  ds["DAV_freq"] = xr.where(ds['DAV_tracked']>0,1,0).mean(dim="time")
+
+  #output data
+  if data_return == False:
+    print("saving netcdf in: " + fn_out)
+    ds.to_netcdf(fn_out)
+  if data_return == True:
+    return ds
+  else:
+    return 0
 
 
 
