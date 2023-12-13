@@ -140,31 +140,63 @@ def GetIndex(ds,coord="",key=""):
     index += 1
   return index
 
-def Area(arr,boolarr,lats=[0,90],lons=[-180,180],grid=2.5):
-  #This method calculate the area of a portion of a matrix in km^2. 
+def Area(boolarr,lat_lim=[0,90],lon_lim=[-180,180],grid=2.5):
+  #This method calculate the area of a portion of a matrix in km^2.
+  #This function can also compute the latitudinal and longitudinal extent of the blocking event. 
   #The portion of the matrix is given as a boolean array which is True 
   #where the area has to be calculated.
-  #lons and lats lists define the boundaries of the original array
+  #lon_lim and lat_lim lists define the boundaries of the original array
   #grid defines the dimension of a grid point.
   #! note that the array isn't (lon,lat) but (lat,lon) instead
   area = 0
+  
+  #quantities needed to compute the longitudinal and latitudinal extent as well
+  lats = []
+  lons = []
+  
+  lon_len = len(boolarr[0,:])
+  lat_len = len(boolarr[:,0])
+
   circearth = 40075
-  for ilon in range(len(arr[0,:])):
-    for jlat in range(len(arr[:,0])):
+  for ilon in range(lon_len):
+    for jlat in range(lat_len):
       if boolarr[jlat,ilon] == True:
-        area += np.cos(np.deg2rad(lats[0] + jlat*grid))*(grid*circearth/360)**2
+        #extent
+        lats.append(lat_lim[0] + jlat*grid)
+        lons.append(lon_lim[0] + ilon*grid)
+        #area        
+        area += np.cos(np.deg2rad(lat_lim[0] + jlat*grid))*(grid*circearth/360)**2
+  #finding the extent
+  #here the latitudinal position of the event is identified as the mean of the latitudes list, coherently with the center of mass method
+  lon_ext = (np.amax(lons) - np.amin(lons))*np.cos(np.deg2rad(np.mean(lats))) + grid
+  lat_ext = np.amax(lats) - np.amin(lats) + grid
         
-  return area
+  return area,lon_ext,lat_ext
   
 
 def OrderIndexes(arr):
+  examined_idxs = []
+  for t in tqdm(range(arr.shape[0])):
+    today_idxs = np.unique(arr[t,:,:])
+    #remove '0' from today indexes
+    bool = today_idxs > 0
+    today_idxs = today_idxs[bool]
+    for idx in today_idxs:
+      if idx in examined_idxs:
+        arr[t,:,:][arr[t,:,:]==idx] = examined_idxs.index(idx)+1
+      else:
+        arr[t,:,:][arr[t,:,:]==idx] = len(examined_idxs)+1
+        examined_idxs.append(idx)
+
+  '''  
   boolarr = arr > 0
   newarr = arr[boolarr]
   newarr = np.unique(np.sort(newarr))
   newval = range(1,len(newarr)+1)
   for i in tqdm(range(0,len(newarr))):
+    #The algorithm looks at the whole matrix each time. This is not very efficient.
     arr[arr == newarr[i]] = newval[i]
-    #np.where(arr == newarr[i], newval[i],arr)
+  '''
   return arr
 
 """
@@ -363,9 +395,6 @@ def ContourTracking3D(dataset,fn_out = "",var_name = "pIB_boolean",data_return =
     print("Error Code 1: dataset not valid. The variable " + var_name + " cannot be found")
     return 1
   arr = pIB_boolean.values[:,0,:,:] 
-
-  #filtra circa 9 punti griglia
-
   #label method from scipy.ndimage.measurements is used
   #structure = np.ones((3,3,3))
   structure = [[[0,0,0],[0,1,0],[0,0,0]],\
@@ -435,7 +464,7 @@ def ContourTracking2D(dataset,fn_out = "",var_name = "DAV",data_return = False,
   lastlat = len(dataset.lat.values) -1
   lastlon = len(dataset.lon.values) -1
   print("connected component analysis")
-  for t in tqdm(np.arange(0,len(times)-1)):
+  for t in tqdm(tqdm(range(len(times)))):
     if t > 0:
       tmp = np.amax(arr[t-1,:,:])
       if max < tmp: #update maximum value in matrix
@@ -459,7 +488,6 @@ def ContourTracking2D(dataset,fn_out = "",var_name = "DAV",data_return = False,
     """
     if t > 0:
       diff = times[t]-times[t-1]
-      lbl = 1
       bool1 = arr[t-1,:,:] > 0
       bool2 = arr[t,:,:] > 0
       comp1 = np.unique(arr[t-1,bool1])
@@ -486,68 +514,72 @@ def ContourTracking2D(dataset,fn_out = "",var_name = "DAV",data_return = False,
 
   print('rearranging indexes')
   arr[:,:,:] = OrderIndexes(arr[:,:,:])
-  #create a dictionary where the number of items is equal to the number of labels
-  for l in np.unique(arr):
-    dic.append({})
 
   if char_dic == True:
-    #compute blocking events characteristics
+    #create a dictionary where the number of items is equal to the number of labels + 1
+    #add an empty first element to create correspondence between idx and label
+    dic.append({})
+    #find the idxs
+    idxs = np.unique(arr)
+    bool = idxs > 0
+    idxs = idxs[bool].astype(int)
+    #initialize the remaining dictionaries
+    for l in idxs:
+      dic.append({})
+      #compute blocking events characteristics
     """
-    FILTERS MODULE
+    CHARACTERISTICS MODULE
     """
     #initialize dictionary
-    for l in np.unique(arr).astype(int):
+    for l in idxs:
       dic[l]['persistence'] = 0
       dic[l]['avg_area'] = 0
       dic[l]['avg_aspect_ratio'] = 0
       dic[l]['distance_traveled'] = 0
       dic[l]['track'] = []
       dic[l]['date'] = ''
+      dic[l]['time'] = 0
     print('calculating characteristics')
     print('persistence, track, date:')
     #PERSISTENCE MODULE
     past_events = []
-    for t in tqdm(np.arange(0,len(times)-1)):
+    len_time = len(times)-1
+    for t in tqdm(np.arange(0,len_time)):
       bool = arr[t,:,:] > 0
       today_events = np.unique(arr[t,bool]).astype(int) #labels at day t
       for l in today_events:
         if l not in past_events:
           past_events.append(l)
           if save_track == True:
-            dic[l]['track'] = CenterofMass(arr[t:,:,:],l,grid=2.5) #center of mass traj
+            #100 is a safe value for making the algorithm a little more efficient, as there is no event longer than 100 days.
+            dic[l]['track'] = CenterofMass(arr[t:min([t+100,len_time]),:,:],l,grid=2.5) #center of mass traj
             xs,ys = dic[l]['track']
             dist = 0
             for i in range(len(xs)-1):
               dist += ((xs[i+1]-xs[i])**2 + (ys[i+1]-ys[i])**2)**0.5
             dic[l]['distance_traveled'] = dist
             dic[l]['date'] = times[t]
+            dic[l]['time'] = t
         dic[l]['persistence'] += 1
 
     print('area and longitudinal extent')
     #AREA and LONGITUDINAL EXTENT MODULE
-    for t in tqdm(np.arange(0,len(times)-1)):
-      bool = arr[t,:,:] > 0
-      today_events = np.unique(arr[t,bool]).astype(int)
+    for t in tqdm(range(len(times))):
+      today_events = np.unique(arr[t,:,:]).astype(int)
+      #remove '0' from the list
+      bool = today_events > 0
+      today_events = today_events[bool]
       for l in today_events:
         boolarr = arr[t,:,:] == l
-        area = Area(arr[t,:,:],boolarr)
-        lon_ext = 0
-        for i in range(boolarr.shape[1]):
-          if np.any(boolarr[:,i]):
-            lon_ext += 1
-        lat_ext = 0
-        for i in range(boolarr.shape[0]):
-          if np.any(boolarr[i,:]):
-            lat_ext += 1
+        area,lon_ext,lat_ext = Area(boolarr)
         #updating aspect_ratio
-        lat_pos = sum(dic[l]['track'][0])/len(dic[l]['track'][0])
-        dic[l]['avg_aspect_ratio'] += ((lon_ext*np.cos(np.deg2rad(lat_pos)))/lat_ext)/dic[l]['persistence']#the longitudinal dimension of a single grid diminuish with the latitude
+        dic[l]['avg_aspect_ratio'] += (lon_ext/lat_ext)/dic[l]['persistence']#the longitudinal dimension of a single grid diminuish with the latitude
         #updating area
         dic[l]['avg_area'] += area/dic[l]['persistence'] 
 
     #save dictionary
     np.save(fn_dic,dic)
-
+  print(dic[0])
   print("number of labels: " + str(np.amax(arr)))
 
   #initialize coords for new .nc
@@ -578,7 +610,7 @@ def ContourTracking2D(dataset,fn_out = "",var_name = "DAV",data_return = False,
 
 
 def FilterEvents(ds,fn_dic='',fn_out = "",fn_dic_out="",var_name = "DAV_tracked",data_return = False,
-                  pers_min = 5,pers_max = 25,min_area = 500000,max_area=4e6,max_ar=5):
+                  pers_min = 5,pers_max = 25,min_area = 500000,max_area=4e6,max_ar=2.4):
 
   print("__Starting a Filtering process__")
   print("input: " + var_name)
@@ -595,14 +627,13 @@ def FilterEvents(ds,fn_dic='',fn_out = "",fn_dic_out="",var_name = "DAV_tracked"
   dic = np.load(fn_dic,allow_pickle=True)
 
   print('applying filters')
-  to_pop = []
   to_retain = []
-  l = 0
-  for event in tqdm(dic):
+  l = 1
+  for event in tqdm(dic[1:]): #skip the first empty element
     if event['persistence'] < pers_min or event['persistence'] > pers_max or event['avg_area'] < min_area or event['avg_area'] > max_area or event['avg_aspect_ratio'] > max_ar:
-      to_pop.append(l)
-      #I should find a better way to do this, as it isn't efficient at all. For example I could use the time information stored in the dictionary
-      arr = np.where(arr==l,0,arr)
+      ti = event['time']
+      tf = event['time'] + event['persistence']
+      arr[ti:tf,:,:] = np.where(arr[ti:tf,:,:]==l,0,arr[ti:tf,:,:])
     else:
       to_retain.append(l)
     l+=1 #didn't use enumerate to use the progress bar.
@@ -619,7 +650,7 @@ def FilterEvents(ds,fn_dic='',fn_out = "",fn_dic_out="",var_name = "DAV_tracked"
 
   #save dictionary
   if fn_dic != '':
-    np.save(fn_dic,dic_filtered)
+    np.save(fn_dic_out,dic_filtered)
 
   print("number of labels: " + str(np.amax(arr)))
 
