@@ -2,7 +2,6 @@
 ______________________________________
 //////////////        \\\\\\\\\\\\\\\\
 ////////                     \\\\\\\\\
-<<<<<<< HEAD
 ||||||||  BLOCKTRACK LIBRARY  ||||||||
 \\\\\\\\_____          ______/////////
 \\\\\\\\\\\\\\________////////////////
@@ -12,18 +11,6 @@ With the help and avice of: Paolo Davini, CNR-Isac
 
 This library is a set of tools for the analysis of atmospheric blocking in the northern hemisphere.
 The index used for atm blocking diagnostic is described in "Davini et al. - 2012 - Bidimensional diagnostics, variability, and trends of northern hemisphere blocking". Some differences and features are added: the persistence and area criteriamare applied at the level of tracking. Tracking also allow the user to perform lagrangian analysis.
-=======
-||||||||  TRACKBLOCK LIBRARY  ||||||||
-\\\\\\\\_____          ______/////////
-\\\\\\\\\\\\\\________////////////////
-
-Author: Michele Filippucci on intership at ISAC-CNR (TO)
-
-This library is a set of tools for the analysis of atmospheric blocking in the northern hemisphere.
-The index used for atm blocking diagnostic is described in "Davini et al. - 2012 - Bidimensional diagnostics, variability, and 
-trends of northern hemisphere blocking". Some differences and features are added: the persistence and area criteria
-are applied at the level of tracking. Tracking also allow the user to perform lagrangian analysis.
->>>>>>> a3f0dfb03a84e9933b43d201f32f2e8675c8628e
 
 This library was developed using daily datasets.
 
@@ -133,12 +120,6 @@ grid: grid dimension needed to convert the index in latitudes and longitudes.
 _/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/
 """
 
-<<<<<<< HEAD
-=======
-
-
-
->>>>>>> a3f0dfb03a84e9933b43d201f32f2e8675c8628e
 import numpy as np
 import xarray as xr
 from scipy.ndimage.measurements import label
@@ -148,12 +129,6 @@ import matplotlib.pyplot as plt
 import cartopy.util as cutil
 import sys
 import math
-<<<<<<< HEAD
-=======
-# generate random integer values
-from random import seed
-from random import randint
->>>>>>> a3f0dfb03a84e9933b43d201f32f2e8675c8628e
 
 np.set_printoptions(precision=2,threshold=np.inf)
 
@@ -165,31 +140,63 @@ def GetIndex(ds,coord="",key=""):
     index += 1
   return index
 
-def Area(arr,boolarr,lats=[0,90],lons=[-180,180],grid=2.5):
-  #This method calculate the area of a portion of a matrix in km^2. 
+def Area(boolarr,lat_lim=[0,90],lon_lim=[-180,180],grid=2.5):
+  #This method calculate the area of a portion of a matrix in km^2.
+  #This function can also compute the latitudinal and longitudinal extent of the blocking event. 
   #The portion of the matrix is given as a boolean array which is True 
   #where the area has to be calculated.
-  #lons and lats lists define the boundaries of the original array
+  #lon_lim and lat_lim lists define the boundaries of the original array
   #grid defines the dimension of a grid point.
   #! note that the array isn't (lon,lat) but (lat,lon) instead
   area = 0
+  
+  #quantities needed to compute the longitudinal and latitudinal extent as well
+  lats = []
+  lons = []
+  
+  lon_len = len(boolarr[0,:])
+  lat_len = len(boolarr[:,0])
+
   circearth = 40075
-  for ilon in range(len(arr[0,:])):
-    for jlat in range(len(arr[:,0])):
+  for ilon in range(lon_len):
+    for jlat in range(lat_len):
       if boolarr[jlat,ilon] == True:
-        area += np.cos((lats[0] + jlat*grid)*(math.pi/360))*(2.5*circearth/360)**2
+        #extent
+        lats.append(lat_lim[0] + jlat*grid)
+        lons.append(lon_lim[0] + ilon*grid)
+        #area        
+        area += np.cos(np.deg2rad(lat_lim[0] + jlat*grid))*(grid*circearth/360)**2
+  #finding the extent
+  #here the latitudinal position of the event is identified as the mean of the latitudes list, coherently with the center of mass method
+  lon_ext = (np.amax(lons) - np.amin(lons))*np.cos(np.deg2rad(np.mean(lats))) + grid
+  lat_ext = np.amax(lats) - np.amin(lats) + grid
         
-  return area
+  return area,lon_ext,lat_ext
   
 
 def OrderIndexes(arr):
+  examined_idxs = []
+  for t in tqdm(range(arr.shape[0])):
+    today_idxs = np.unique(arr[t,:,:])
+    #remove '0' from today indexes
+    bool = today_idxs > 0
+    today_idxs = today_idxs[bool]
+    for idx in today_idxs:
+      if idx in examined_idxs:
+        arr[t,:,:][arr[t,:,:]==idx] = examined_idxs.index(idx)+1
+      else:
+        arr[t,:,:][arr[t,:,:]==idx] = len(examined_idxs)+1
+        examined_idxs.append(idx)
+
+  '''  
   boolarr = arr > 0
   newarr = arr[boolarr]
   newarr = np.unique(np.sort(newarr))
   newval = range(1,len(newarr)+1)
   for i in tqdm(range(0,len(newarr))):
+    #The algorithm looks at the whole matrix each time. This is not very efficient.
     arr[arr == newarr[i]] = newval[i]
-    #np.where(arr == newarr[i], newval[i],arr)
+  '''
   return arr
 
 """
@@ -388,9 +395,6 @@ def ContourTracking3D(dataset,fn_out = "",var_name = "pIB_boolean",data_return =
     print("Error Code 1: dataset not valid. The variable " + var_name + " cannot be found")
     return 1
   arr = pIB_boolean.values[:,0,:,:] 
-
-  #filtra circa 9 punti griglia
-
   #label method from scipy.ndimage.measurements is used
   #structure = np.ones((3,3,3))
   structure = [[[0,0,0],[0,1,0],[0,0,0]],\
@@ -430,32 +434,41 @@ def ContourTracking3D(dataset,fn_out = "",var_name = "pIB_boolean",data_return =
   else:
     return 0
 
-def ContourTracking2D(dataset,fn_out = "",var_name = "DAV",data_return = False, pers = 0,min_area = 500000,max_length=28):
+
+def ContourTracking2D(dataset,fn_out = "",var_name = "DAV",data_return = False,
+                      char_dic=True,save_track = True, fn_dic= ''):
   if fn_out=="" and data_return==False:
     string = "Specify the kind of output you want"
     print(string)
     return 0
   try:
     pIB_boolean = dataset[var_name]
+    #initialize the array for performing the tracking
+    arr = pIB_boolean.values
   except:
     print("Error Code 1: dataset not valid. The variable " + var_name + " cannot be found")
     return 1
   
+  #initialiazing a blocking characteristics dictionary
+  dic = []
+
   print("__Starting a Tracking process__")
-  print("input: " + var_name + ", pers = " + str(pers))
+  print("input: " + var_name)
 
   #loop over time
+  #initialize some varaibles
   max = 0
+  times = dataset.time.values
+  #store the lat and lon dimensions for later computations.
+  #more robust than arr.shape, as the order of coordinates may vary
   lastlat = len(dataset.lat.values) -1
   lastlon = len(dataset.lon.values) -1
-  times = dataset.time.values
   print("connected component analysis")
-  for t in tqdm(np.arange(0,len(times)-1)):
+  for t in tqdm(range(len(times))):
     if t > 0:
       tmp = np.amax(arr[t-1,:,:])
       if max < tmp: #update maximum value in matrix
         max = tmp
-    arr = pIB_boolean.values[:,:,:]
     #label method from scipy.ndimage.measurements is used
     structure = [[0,1,0],\
                  [1,1,1],\
@@ -468,32 +481,13 @@ def ContourTracking2D(dataset,fn_out = "",var_name = "DAV",data_return = False, 
     #making it periodic in longitude
     for j in range(0,lastlat):
       if arr[t,j,lastlon] > 0 and arr[t,j,0] > 0:
-        arr[t,:,:] = xr.where(arr[t,:,:] == arr[t,j,lastlon], arr[t,j,0], arr[t,:,:])
+        arr[t,:,:] = np.where(arr[t,:,:] == arr[t,j,lastlon], arr[t,j,0], arr[t,:,:])
 
-    #applying some filters
-    bool = arr[t,:,:] > 0
-    comp = np.unique(arr[t,bool])
-    for l in comp:
-      boolarr = arr[t,:,:] == l
-      length = 0
-      for i in range(boolarr.shape[1]):
-        if np.any(boolarr[:,i]):
-          length += 1
-      area = Area(arr[t,:,:],boolarr)
-      #filtering cluster dimension
-      if area < min_area or length > max_length: 
-        #the minimum area value has been chosen looking at present litterature
-        #the maxmimum length has been set to 60 degrees, hence 24 cells with 2.5 deg resolution.
-        arr[t,:,:] = xr.where(boolarr, 0,arr[t,:,:])
     """
     TRACKING IN TIME
     """
     if t > 0:
-<<<<<<< HEAD
       diff = times[t]-times[t-1]
-=======
->>>>>>> a3f0dfb03a84e9933b43d201f32f2e8675c8628e
-      lbl = 1
       bool1 = arr[t-1,:,:] > 0
       bool2 = arr[t,:,:] > 0
       comp1 = np.unique(arr[t-1,bool1])
@@ -502,10 +496,6 @@ def ContourTracking2D(dataset,fn_out = "",var_name = "DAV",data_return = False, 
         boolarr1 = arr[t-1,:,:] == l1
         for l2 in comp2:
           #first we use a filter for avoiding lagrangian tracking between distant days
-<<<<<<< HEAD
-=======
-          diff = times[t]-times[t-1]
->>>>>>> a3f0dfb03a84e9933b43d201f32f2e8675c8628e
           diff = int(diff)
           diff = diff/(1e9*60*60*24) #conversion from ms to days
           if diff > 1:
@@ -522,35 +512,82 @@ def ContourTracking2D(dataset,fn_out = "",var_name = "DAV",data_return = False, 
         if diff > 1:
           break
 
+  print('rearranging indexes')
   arr[:,:,:] = OrderIndexes(arr[:,:,:])
 
-  """
-  PERSISTENCE MODULE
-  """
-  if pers > 0:
-    counter = 0
-    safe = []
-    print("persistence analysis")
-    for t in tqdm(np.arange(0,len(dataset.time.values))):
-      bool1 = arr[t,:,:] > 0
-      try:
-        bool2 = arr[t+pers,:,:] > 0
-      except:
-        arr[t:,:,:] = 0 #not possible to check so out of output
-        print("exited with " + str(len(dataset.time.values)-t-pers) + " elements remaining")
-        print(str(counter) + " blocking events where found")
-        break
-      comp1 = np.unique(arr[t,bool1]) #labels at day t
-      comp2 = np.unique(arr[t+pers,bool2]) #labels at day t+pers
-      for l1 in comp1:
-        if not l1 in safe:
-          if not l1 in comp2: #if pers days after there is no l1 the event is deleted
-            arr[:,:,:] = xr.where(arr[:,:,:]==l1,0,arr[:,:,:])
-          else:
-            safe.append(l1) #if pers days after there is l1 the event is saved
-            counter += 1
-  print("ordering indexes")
-  arr = OrderIndexes(arr)
+  if char_dic == True:
+    #create a dictionary where the number of items is equal to the number of labels + 1
+    #add an empty first element to create correspondence between idx and label
+    dic.append({})
+    #find the idxs
+    idxs = np.unique(arr)
+    bool = idxs > 0
+    idxs = idxs[bool].astype(int)
+    #initialize the remaining dictionaries
+    for l in idxs:
+      dic.append({})
+      #compute blocking events characteristics
+    """
+    CHARACTERISTICS MODULE
+    """
+    #initialize dictionary
+    for l in idxs:
+      dic[l]['persistence'] = 0
+      dic[l]['avg_area'] = 0
+      dic[l]['avg_aspect_ratio'] = 0
+      dic[l]['distance_traveled'] = 0
+      dic[l]['track'] = []
+      dic[l]['date'] = ''
+      dic[l]['time'] = 0
+    print('calculating characteristics')
+    print('persistence, track, date:')
+    #PERSISTENCE MODULE
+    past_events = []
+    len_time = len(times)-1
+    for t in tqdm(np.arange(0,len_time)):
+      bool = arr[t,:,:] > 0
+      today_events = np.unique(arr[t,bool]).astype(int) #labels at day t
+      for l in today_events:
+        if l not in past_events:
+          past_events.append(l)
+          if save_track == True:
+            #100 is a safe value for making the algorithm a little more efficient, as there is no event longer than 100 days.
+            dic[l]['track'] = CenterofMass(arr[t:min([t+100,len_time]),:,:],l,grid=2.5) #center of mass traj
+            ys,xs = dic[l]['track']
+            dist = 0
+            for i in range(len(xs)-1):
+              lon2km_coeff = np.cos(np.deg2rad(np.mean([ys[i+1],ys[i]])))*111.320
+              lat2km_coeff = 110.574
+              if xs[i+1]*xs[i] > 0: #same sign  
+                dist += (((xs[i+1]-xs[i])*lon2km_coeff)**2 + ((ys[i+1]-ys[i])*lat2km_coeff)**2)**0.5
+              if xs[i+1]*xs[i] <= 0 and abs(xs[i])>100: #different sign->boundary of the domain
+                dist += (((xs[i+1]-xs[i]-360)*lon2km_coeff)**2 + ((ys[i+1]-ys[i])*lat2km_coeff)**2)**0.5
+            dic[l]['distance_traveled'] = dist
+            dic[l]['avg_dist_traveled'] = dist/len(xs) 
+            if dist < 0:
+              print(dist)
+            dic[l]['date'] = times[t]
+            dic[l]['time'] = t
+        dic[l]['persistence'] += 1
+
+    print('area and longitudinal extent')
+    #AREA and LONGITUDINAL EXTENT MODULE
+    for t in tqdm(range(len(times))):
+      today_events = np.unique(arr[t,:,:]).astype(int)
+      #remove '0' from the list
+      bool = today_events > 0
+      today_events = today_events[bool]
+      for l in today_events:
+        boolarr = arr[t,:,:] == l
+        area,lon_ext,lat_ext = Area(boolarr)
+        #updating aspect_ratio
+        dic[l]['avg_aspect_ratio'] += (lon_ext/lat_ext)/dic[l]['persistence']
+        #updating area
+        dic[l]['avg_area'] += area/dic[l]['persistence']  
+
+    #save dictionary
+    np.save(fn_dic,dic)
+  print(dic[0])
   print("number of labels: " + str(np.amax(arr)))
 
   #initialize coords for new .nc
@@ -566,10 +603,9 @@ def ContourTracking2D(dataset,fn_out = "",var_name = "DAV",data_return = False, 
   dataset["DAV_tracked"] = DAV_tracked
   
   """
-  Update DAV and DAV_freq (if present) after area and persistence filter are applied.
+  Update DAV_freq (if present) after area and persistence filter are applied.
   """
-  dataset[var_name] = DAV_tracked > 0
-  dataset[var_name + "_freq"] = dataset[var_name].mean(dim="time")
+  dataset[var_name + "_freq"] = xr.where(dataset['DAV_tracked']>0,1,0).mean(dim="time")
 
   #output data
   if data_return == False:
@@ -579,3 +615,78 @@ def ContourTracking2D(dataset,fn_out = "",var_name = "DAV",data_return = False, 
     return dataset
   else:
     return 0
+
+
+def FilterEvents(ds,fn_dic='',fn_out = "",fn_dic_out="",var_name = "DAV_tracked",data_return = False,
+                  pers_min = 5,pers_max = 25,min_area = 500000,max_area=4e6,max_ar=2.4,max_avg_dist=1000):
+
+  print("__Starting a Filtering process__")
+  print("input: " + var_name)
+
+  try:
+    pIB_boolean = ds[var_name]
+    #initialize the array for performing the tracking
+    arr = pIB_boolean.values
+  except:
+    print("Error Code 1: dataset not valid. The variable " + var_name + " cannot be found")
+    return 1
+
+  #import dictionary
+  dic = np.load(fn_dic,allow_pickle=True)
+
+  print('applying filters')
+  to_retain = []
+  l = 1
+  for event in tqdm(dic[1:]): #skip the first empty element
+    if event['persistence'] < pers_min or event['persistence'] > pers_max or event['avg_area'] < min_area or event['avg_area'] > max_area or event['avg_aspect_ratio'] > max_ar or event['avg_dist_traveled'] > max_avg_dist:
+      ti = event['time']
+      tf = event['time'] + event['persistence']
+      arr[ti:tf,:,:] = np.where(arr[ti:tf,:,:]==l,0,arr[ti:tf,:,:])
+    else:
+      to_retain.append(l)
+    l+=1 #didn't use enumerate to use the progress bar.
+
+
+  #didn't find another way to update the dictionary. It is a bit strange
+  dic_filtered = []
+  for l,event in enumerate(dic):
+    if l in to_retain:
+      dic_filtered.append(event)
+
+  print('rearranging indexes')
+  arr = OrderIndexes(arr)
+
+  #save dictionary
+  if fn_dic != '':
+    np.save(fn_dic_out,dic_filtered)
+
+  print("number of labels: " + str(np.amax(arr)))
+
+  #initialize coords for new .nc
+  times = ds["time"].values
+  lon = ds["lon"].values
+  lat = ds["lat"].values
+
+  #initialize dataset object for the new .nc
+  DAV_tracked = xr.DataArray(0,coords=[times,lat,lon],dims = pIB_boolean.dims)
+  DAV_tracked[:,:,:] = arr
+
+  #assign new data_array to dataset
+  ds["DAV_tracked"] = DAV_tracked
+  
+  """
+  Update DAV_freq (if present) after area and persistence filter are applied.
+  """
+  ds["DAV_freq"] = xr.where(ds['DAV_tracked']>0,1,0).mean(dim="time")
+
+  #output data
+  if data_return == False:
+    print("saving netcdf in: " + fn_out)
+    ds.to_netcdf(fn_out)
+  if data_return == True:
+    return ds
+  else:
+    return 0
+
+
+

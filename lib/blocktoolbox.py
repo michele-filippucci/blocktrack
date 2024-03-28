@@ -464,7 +464,7 @@ def ContourTracking2D(dataset,fn_out = "",var_name = "DAV",data_return = False,
   lastlat = len(dataset.lat.values) -1
   lastlon = len(dataset.lon.values) -1
   print("connected component analysis")
-  for t in tqdm(tqdm(range(len(times)))):
+  for t in tqdm(range(len(times))):
     if t > 0:
       tmp = np.amax(arr[t-1,:,:])
       if max < tmp: #update maximum value in matrix
@@ -553,11 +553,19 @@ def ContourTracking2D(dataset,fn_out = "",var_name = "DAV",data_return = False,
           if save_track == True:
             #100 is a safe value for making the algorithm a little more efficient, as there is no event longer than 100 days.
             dic[l]['track'] = CenterofMass(arr[t:min([t+100,len_time]),:,:],l,grid=2.5) #center of mass traj
-            xs,ys = dic[l]['track']
+            ys,xs = dic[l]['track']
             dist = 0
             for i in range(len(xs)-1):
-              dist += ((xs[i+1]-xs[i])**2 + (ys[i+1]-ys[i])**2)**0.5
+              lon2km_coeff = np.cos(np.deg2rad(np.mean([ys[i+1],ys[i]])))*111.320
+              lat2km_coeff = 110.574
+              if xs[i+1]*xs[i] > 0: #same sign  
+                dist += (((xs[i+1]-xs[i])*lon2km_coeff)**2 + ((ys[i+1]-ys[i])*lat2km_coeff)**2)**0.5
+              if xs[i+1]*xs[i] <= 0 and abs(xs[i])>100: #different sign->boundary of the domain
+                dist += (((xs[i+1]-xs[i]-360)*lon2km_coeff)**2 + ((ys[i+1]-ys[i])*lat2km_coeff)**2)**0.5
             dic[l]['distance_traveled'] = dist
+            dic[l]['avg_dist_traveled'] = dist/len(xs) 
+            if dist < 0:
+              print(dist)
             dic[l]['date'] = times[t]
             dic[l]['time'] = t
         dic[l]['persistence'] += 1
@@ -573,9 +581,9 @@ def ContourTracking2D(dataset,fn_out = "",var_name = "DAV",data_return = False,
         boolarr = arr[t,:,:] == l
         area,lon_ext,lat_ext = Area(boolarr)
         #updating aspect_ratio
-        dic[l]['avg_aspect_ratio'] += (lon_ext/lat_ext)/dic[l]['persistence']#the longitudinal dimension of a single grid diminuish with the latitude
+        dic[l]['avg_aspect_ratio'] += (lon_ext/lat_ext)/dic[l]['persistence']
         #updating area
-        dic[l]['avg_area'] += area/dic[l]['persistence'] 
+        dic[l]['avg_area'] += area/dic[l]['persistence']  
 
     #save dictionary
     np.save(fn_dic,dic)
@@ -610,7 +618,7 @@ def ContourTracking2D(dataset,fn_out = "",var_name = "DAV",data_return = False,
 
 
 def FilterEvents(ds,fn_dic='',fn_out = "",fn_dic_out="",var_name = "DAV_tracked",data_return = False,
-                  pers_min = 5,pers_max = 25,min_area = 500000,max_area=4e6,max_ar=2.4):
+                  pers_min = 5,pers_max = 25,min_area = 500000,max_area=4e6,max_ar=2.4,max_avg_dist=1000):
 
   print("__Starting a Filtering process__")
   print("input: " + var_name)
@@ -630,7 +638,7 @@ def FilterEvents(ds,fn_dic='',fn_out = "",fn_dic_out="",var_name = "DAV_tracked"
   to_retain = []
   l = 1
   for event in tqdm(dic[1:]): #skip the first empty element
-    if event['persistence'] < pers_min or event['persistence'] > pers_max or event['avg_area'] < min_area or event['avg_area'] > max_area or event['avg_aspect_ratio'] > max_ar:
+    if event['persistence'] < pers_min or event['persistence'] > pers_max or event['avg_area'] < min_area or event['avg_area'] > max_area or event['avg_aspect_ratio'] > max_ar or event['avg_dist_traveled'] > max_avg_dist:
       ti = event['time']
       tf = event['time'] + event['persistence']
       arr[ti:tf,:,:] = np.where(arr[ti:tf,:,:]==l,0,arr[ti:tf,:,:])
