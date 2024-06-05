@@ -317,7 +317,6 @@ def DAV(dataset,fn_out = "",\
   if freq_also == True:
     DAV_freq = sum(DAV)*100/DAV.values.shape[0]
     dataset = dataset.assign(DAV_freq = DAV_freq)
-    #dataset["DAV_freq"].name = "DAV_freq"
   if data_return == False:
     print("saving file in: " + fn_out)
     try:
@@ -331,12 +330,91 @@ def DAV(dataset,fn_out = "",\
     return 0
 
 """
-Tibaldi and Molteni Index
-This function takes a .nc file containing z500 variable and computes the Tibaldi
-and Monteni index for the latitude 60° N.
-It outputs a .dat file containing the design matrix (features, boolean label) needed
-for training a neural network.
+Geopotential Height Anomaly (GHA) index.
+This is a simple implementation of a Geopotential Height Anomaly index for istantaneous blocking detection. This computes the daily geopotential height anomaly for each grid point of a given dataset by comparing the grid value at each day with its mean value over a 90 days time window centered on the same day. Moreover, the algorithm computes the standard deviation of the geopotential height anomaly over the same window. Once these quantities are calculated, a grid point identied as blocked if the anomaly exceeds the standard deviation moltiplied by a multiplicative threshold that is given to the index as a input variable.
 """
+
+def GHA(dataset,fn_out = "",\
+        data_return = False,
+        multiplicative_threshold = 1., 
+        freq_also = False,
+        eulerian_persistence=4,
+        ):
+  print("__Starting a GHA process__")
+  print("input: zg500 , freq_also = " + str(freq_also))
+  bound_up=90
+  bound_down=30
+
+  if fn_out=="" and data_return==False:
+    string = "Specify the kind of output you want"
+    print(string)
+    return 0
+  #checking if dataset is right
+  try:
+    zg = dataset["zg"]
+    """
+    if len(zg.shape)>3:
+      try:
+        dataset = dataset.mean["lev"]
+      except:
+        dataset = dataset.mean["plev"]
+      zg = dataset["zg"]
+      print("zg dimension reduced")
+    """
+    string = "data successfully received"
+  except:
+    string = "zg variable was not found.\n\ Hint: check the content of your dataset."
+    print(string)
+    return 0
+
+  #define XArray using the costructor for an appropriate output
+  times = zg.coords["time"]
+  lon = zg.coords["lon"]
+  lat = zg.coords["lat"]
+
+  #____CHECK GEOP HEIGHT____
+  #ERA5 dataset uses geopotential, not height
+  if zg.values[0,0,0] > 10000:
+      zg = zg/9.80665
+  zg_reduced=zg.loc[:,bound_down:bound_up,:].values
+  gha_reduced=np.zeros(zg_reduced.shape)
+  for t in tqdm(range(45,len(times)-45)):
+    if eulerian_persistence==0:
+      zg_I = zg_reduced[t,:,:]
+      zg_tmp = zg_reduced[t-45:t+45,:,:]
+      zg_mean = np.mean(zg_tmp,axis=0)
+      zg_std = np.std(zg_tmp,axis=0)
+      gha_reduced[t,:,:] = np.where(zg_I-zg_mean>multiplicative_threshold*zg_std,1,0)
+    if eulerian_persistence>0:
+      zg_I = zg_reduced[t:t+eulerian_persistence,:,:]
+      zg_tmp = zg_reduced[t-45:t+45,:,:]
+      zg_mean = np.mean(zg_tmp,axis=0)
+      zg_std = np.std(zg_tmp,axis=0)
+      gha_reduced[t,:,:] = np.prod(np.where(zg_I-np.repeat(np.expand_dims(zg_mean,0),eulerian_persistence,axis=0)>multiplicative_threshold*zg_std,1,0), axis=0)
+      #we also want to considered as blocked the last days of blocking, hence:
+      gha_reduced[t,:,:] = np.logical_or(gha_reduced[t,:,:],(zg_I[0,:,:]-zg_mean>multiplicative_threshold*zg_std)*gha_reduced[t-1,:,:])
+    gha = xr.DataArray(data=np.zeros(zg.shape), 
+                     dims=["time","lat","lon"],
+                     coords = dict(time=dataset["time"],lat=dataset["lat"],lon=dataset["lon"]))
+  gha.loc[:,bound_down:bound_up,:] = gha_reduced
+  dataset = dataset.assign(GHA=gha)
+  
+  if freq_also == True:
+    gha_freq = sum(gha)*100/gha.values.shape[0]
+    dataset = dataset.assign(GHA_freq = gha_freq)
+  if data_return == False:
+    print("saving file in: " + fn_out)
+    try:
+      print(dataset)
+      dataset.to_netcdf(fn_out)
+    except:
+      print("something went wrong")
+  if data_return == True:
+    return dataset
+  else:
+    return 0
+  
+    
 
 def TM(dataset,
        output):
@@ -435,7 +513,7 @@ def ContourTracking3D(dataset,fn_out = "",var_name = "pIB_boolean",data_return =
     return 0
 
 
-def ContourTracking2D(dataset,fn_out = "",var_name = "DAV",data_return = False,
+def ContourTracking2D(dataset,fn_out = "",var_name = "DAV",data_return = False,exp_dic=True,
                       char_dic=True,save_track = True, fn_dic= ''):
   if fn_out=="" and data_return==False:
     string = "Specify the kind of output you want"
@@ -560,7 +638,9 @@ def ContourTracking2D(dataset,fn_out = "",var_name = "DAV",data_return = False,
               lat2km_coeff = 110.574
               if xs[i+1]*xs[i] > 0: #same sign  
                 dist += (((xs[i+1]-xs[i])*lon2km_coeff)**2 + ((ys[i+1]-ys[i])*lat2km_coeff)**2)**0.5
-              if xs[i+1]*xs[i] <= 0 and abs(xs[i])>100: #different sign->boundary of the domain
+              if xs[i+1]*xs[i] <= 0 and abs(xs[i])>100 and xs[i] > 0: #different sign->boundary of the domain
+                dist += (((xs[i+1]-xs[i]+360)*lon2km_coeff)**2 + ((ys[i+1]-ys[i])*lat2km_coeff)**2)**0.5
+              if xs[i+1]*xs[i] <= 0 and abs(xs[i])>100 and xs[i] <= 0: #different sign->boundary of the domain
                 dist += (((xs[i+1]-xs[i]-360)*lon2km_coeff)**2 + ((ys[i+1]-ys[i])*lat2km_coeff)**2)**0.5
             dic[l]['distance_traveled'] = dist
             dic[l]['avg_dist_traveled'] = dist/len(xs) 
@@ -586,7 +666,8 @@ def ContourTracking2D(dataset,fn_out = "",var_name = "DAV",data_return = False,
         dic[l]['avg_area'] += area/dic[l]['persistence']  
 
     #save dictionary
-    np.save(fn_dic,dic)
+    if exp_dic == True:
+        np.save(fn_dic,dic)
   print(dic[0])
   print("number of labels: " + str(np.amax(arr)))
 
@@ -600,39 +681,44 @@ def ContourTracking2D(dataset,fn_out = "",var_name = "DAV",data_return = False,
   DAV_tracked[:,:,:] = arr
 
   #assign new data_array to dataset
-  dataset["DAV_tracked"] = DAV_tracked
+  dataset[var_name+"_tracked"] = DAV_tracked
   
   """
   Update DAV_freq (if present) after area and persistence filter are applied.
   """
-  dataset[var_name + "_freq"] = xr.where(dataset['DAV_tracked']>0,1,0).mean(dim="time")
+  dataset[var_name + "_freq"] = xr.where(dataset[var_name+'_tracked']>0,1,0).mean(dim="time")*100
 
   #output data
   if data_return == False:
     print("saving netcdf in: " + fn_out)
     dataset.to_netcdf(fn_out)
   if data_return == True:
-    return dataset
+    try:
+        return dataset,dic
+    except:
+        print('no dictionary to return')
+        return dataset
   else:
     return 0
 
 
-def FilterEvents(ds,fn_dic='',fn_out = "",fn_dic_out="",var_name = "DAV_tracked",data_return = False,
+def FilterEvents(ds,dic=0,fn_dic='',fn_out = "",fn_dic_out="",var_name = "DAV",data_return = False,exp_dic=True,
                   pers_min = 5,pers_max = 25,min_area = 500000,max_area=4e6,max_ar=2.4,max_avg_dist=1000):
 
   print("__Starting a Filtering process__")
-  print("input: " + var_name)
+  print("input: " + var_name + "_tracked")
 
   try:
-    pIB_boolean = ds[var_name]
+    pIB_boolean = ds[var_name + "_tracked"]
     #initialize the array for performing the tracking
     arr = pIB_boolean.values
   except:
-    print("Error Code 1: dataset not valid. The variable " + var_name + " cannot be found")
+    print("Error Code 1: dataset not valid. The variable " + var_name + "_tracked" + " cannot be found")
     return 1
 
   #import dictionary
-  dic = np.load(fn_dic,allow_pickle=True)
+  if dic == 0:
+      dic = np.load(fn_dic,allow_pickle=True)
 
   print('applying filters')
   to_retain = []
@@ -657,7 +743,7 @@ def FilterEvents(ds,fn_dic='',fn_out = "",fn_dic_out="",var_name = "DAV_tracked"
   arr = OrderIndexes(arr)
 
   #save dictionary
-  if fn_dic != '':
+  if exp_dic==True:
     np.save(fn_dic_out,dic_filtered)
 
   print("number of labels: " + str(np.amax(arr)))
@@ -672,19 +758,23 @@ def FilterEvents(ds,fn_dic='',fn_out = "",fn_dic_out="",var_name = "DAV_tracked"
   DAV_tracked[:,:,:] = arr
 
   #assign new data_array to dataset
-  ds["DAV_tracked"] = DAV_tracked
+  ds[var_name+"_tracked"] = DAV_tracked
   
   """
   Update DAV_freq (if present) after area and persistence filter are applied.
   """
-  ds["DAV_freq"] = xr.where(ds['DAV_tracked']>0,1,0).mean(dim="time")
+  ds[var_name + "_freq"] = xr.where(ds[var_name+"_tracked"]>0,1,0).mean(dim="time")*100
 
   #output data
   if data_return == False:
     print("saving netcdf in: " + fn_out)
     ds.to_netcdf(fn_out)
   if data_return == True:
-    return ds
+    try:
+        return ds,dic_filtered
+    except:
+        print('no dictionary to return')
+        return ds
   else:
     return 0
 
