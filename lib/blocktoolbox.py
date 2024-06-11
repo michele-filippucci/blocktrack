@@ -30,59 +30,6 @@ ______________________________________
 \\\\\\\\_____          ______/////////
 \\\\\\\\\\\\\\________////////////////
 
-_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/
-
-_ _ _ DAV(dataset,fn_out = "",data_return = False,freq_also = False,mer_gradient_filter = False,long_filter = False) _ _ _ 
-
-This function is capable of creating an nc file identical to the input dataset (located in fn_out) with additional attributes:
-DAV  and (when freq_also == True) DAV_freq. 
-DAV is a matrix with the same shape of the zg matrix limited to 20-70 nord latitudes. It is False (or "0") where there is no blocking 
-and it is True (or "1") where there is.
-As an alternative it is possible to change the flag "data_return" and the function will return a dataset object from the class xarray containing 
-the same additional attributes
-dataset: input dataset
-fn_out: location and name of the new dataset. for example "user/home/dataset.nc"
-data_return: when False fn_out is used, otherwise it is returned.
-freq_also: if True the frequency of blocking (time mean of DAV) is calculated and stored in the netcdf
-mer_gradient_filter: if True a filter for avoiding the detection of equatorial cut of lows is applied. The filter and its functioning is
-described in Davini et al. 2012.
-
-_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/
-
-_ _ _ TM(dataset,output) _ _ _ 
-
-Tibaldi and Molteni Index This function takes a .nc file containing z500 variable and computes the Tibaldi and Monteni index for the latitude 
-60° N. It outputs a .dat file containing the design matrix (features, boolean label).
-dataset: input dataset
-output: .dat output
-
-_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/
-
-EXPERIMENTAL!
-
-_ _ _ ContourTracking3D(dataset,fn_out = "",var_name = "pIB_boolean",data_return = False) _ _ _ 
-
-This is an experimental tracking function that treats time as a third dimension equivalent to longitude and latitude. This is computationally
-more efficient but it treats badly the merging and splitting of blocking events and non-continuous datasets.
-
-_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/
-
-_ _ _ ContourTracking2D(dataset,fn_out = "",var_name = "DAV",data_return = False, pers = 0) _ _ _ 
-
-This is a tracking function. 2D stands for the number of dimension that the method label from scipy takes under consideration.
-This function takes a .nc file containing the DAV attribute from the function DAV and creates a new .nc file containing an additional 
-attribute called var_name + _tracked which is zero when blocking is not occuring and is n when the nth blocking
-event is occuring.
-
-dataset: input dataset
-fn_out: output dataset
-var_name: name of the boolean matrix in the input dataset
-data_return: similar to DAV method data_return. If it is true no output is saved and the dataset is returned in the script.
-pers: a persistency filter on pers days is applied.
-min_area: minimum area (km^2) required to indentify an area as blocked on a single day.
-
-_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/
-
 _ _ _ GetIndex(ds,coord="",key="") _ _ _ 
 
 This function find the index of the numpy array correspondent to a ceratin variable value. For example if we want to find the index correspondent
@@ -188,15 +135,6 @@ def OrderIndexes(arr):
         arr[t,:,:][arr[t,:,:]==idx] = len(examined_idxs)+1
         examined_idxs.append(idx)
 
-  '''  
-  boolarr = arr > 0
-  newarr = arr[boolarr]
-  newarr = np.unique(np.sort(newarr))
-  newval = range(1,len(newarr)+1)
-  for i in tqdm(range(0,len(newarr))):
-    #The algorithm looks at the whole matrix each time. This is not very efficient.
-    arr[arr == newarr[i]] = newval[i]
-  '''
   return arr
 
 """
@@ -240,37 +178,18 @@ def CenterofMass(tuple,label,grid=2.5):
 
 """
 This function is capable of creating an nc file identical (located in fn_out)
-to the BlockTools.dataset with additional attributes:
-pIB_boolean and (when freq_also == True) pIB_frequencies
-As an alternative you can change the flag "data_return" and the function
-will return a dataset object from the class xarray containing the same
-additional attributes
+to the BlockTools.dataset with additional attributes
 """  
-def DAV(dataset,fn_out = "",\
-        data_return = False,\
-        freq_also = False,\
-        mer_gradient_filter = False,\
+def DAV(dataset,
+        mer_gradient_filter = False
         ):
   
   print("__Starting a DAV process__")
-  print("input: zg500 , freq_also = " + str(freq_also) + ", mer_gradient_filter = " + str(mer_gradient_filter) )
-
-  if fn_out=="" and data_return==False:
-    string = "Specify the kind of output you want"
-    print(string)
-    return 0
+  print("input: zg500 , mer_gradient_filter = " + str(mer_gradient_filter) )
+  
   #checking if dataset is right
   try:
     zg = dataset["zg"]
-    """
-    if len(zg.shape)>3:
-      try:
-        dataset = dataset.mean["lev"]
-      except:
-        dataset = dataset.mean["plev"]
-      zg = dataset["zg"]
-      print("zg dimension reduced")
-    """
     string = "data successfully received"
   except:
     string = "zg variable was not found.\n\ Hint: check the content of your dataset."
@@ -314,53 +233,27 @@ def DAV(dataset,fn_out = "",\
   	
   dataset = dataset.assign(DAV=DAV)
   
-  if freq_also == True:
-    DAV_freq = sum(DAV)*100/DAV.values.shape[0]
-    dataset = dataset.assign(DAV_freq = DAV_freq)
-  if data_return == False:
-    print("saving file in: " + fn_out)
-    try:
-      print(dataset)
-      dataset.to_netcdf(fn_out)
-    except:
-      print("something went wrong")
-  if data_return == True:
-    return dataset
-  else:
-    return 0
-
+  DAV_freq = sum(DAV)*100/DAV.values.shape[0]
+  dataset = dataset.assign(DAV_freq = DAV_freq)
+  return dataset
+  
 """
 Geopotential Height Anomaly (GHA) index.
 This is a simple implementation of a Geopotential Height Anomaly index for istantaneous blocking detection. This computes the daily geopotential height anomaly for each grid point of a given dataset by comparing the grid value at each day with its mean value over a 90 days time window centered on the same day. Moreover, the algorithm computes the standard deviation of the geopotential height anomaly over the same window. Once these quantities are calculated, a grid point identied as blocked if the anomaly exceeds the standard deviation moltiplied by a multiplicative threshold that is given to the index as a input variable.
 """
 
-def GHA(dataset,fn_out = "",\
-        data_return = False,
-        multiplicative_threshold = 1., 
-        freq_also = False,
-        eulerian_persistence=4,
+def GHA(dataset,
+        multiplicative_threshold = 1.26, 
+        eulerian_persistence=0,
         ):
   print("__Starting a GHA process__")
-  print("input: zg500 , freq_also = " + str(freq_also))
+  print("input: zg500 , multiplicative threshold = " + str(multiplicative_threshold) + ' , eulerian_persistence = ' + str(eulerian_persistence))
   bound_up=90
   bound_down=30
-
-  if fn_out=="" and data_return==False:
-    string = "Specify the kind of output you want"
-    print(string)
-    return 0
   #checking if dataset is right
+  
   try:
     zg = dataset["zg"]
-    """
-    if len(zg.shape)>3:
-      try:
-        dataset = dataset.mean["lev"]
-      except:
-        dataset = dataset.mean["plev"]
-      zg = dataset["zg"]
-      print("zg dimension reduced")
-    """
     string = "data successfully received"
   except:
     string = "zg variable was not found.\n\ Hint: check the content of your dataset."
@@ -399,20 +292,9 @@ def GHA(dataset,fn_out = "",\
   gha.loc[:,bound_down:bound_up,:] = gha_reduced
   dataset = dataset.assign(GHA=gha)
   
-  if freq_also == True:
-    gha_freq = sum(gha)*100/gha.values.shape[0]
-    dataset = dataset.assign(GHA_freq = gha_freq)
-  if data_return == False:
-    print("saving file in: " + fn_out)
-    try:
-      print(dataset)
-      dataset.to_netcdf(fn_out)
-    except:
-      print("something went wrong")
-  if data_return == True:
-    return dataset
-  else:
-    return 0
+  gha_freq = sum(gha)*100/gha.values.shape[0]
+  dataset = dataset.assign(GHA_freq = gha_freq)
+  return dataset
   
     
 
@@ -453,72 +335,7 @@ def TM(dataset,
   file.close()
   return 0
 
-"""
-Contour Tracking
-This function takes a .nc file containing the pIB_boolean attribute from the function
-boolean_pIB and creates a new .nc file containing an additional attribute called 
-pIB_tracked which is zero when blocking is not occuring and is n when the nth blocking
-event is occuring.
-3D version uses label method on a 3D matrix (time,longitude,latitude)
-2D version uses label method in a foor loop (on t) on a 2D matrix (longitude,latitude)
-"""
-def ContourTracking3D(dataset,fn_out = "",var_name = "pIB_boolean",data_return = False):
-  if fn_out=="" and data_return==False:
-    string = "Specify the kind of output you want"
-    print(string)
-    return 0
-  try:
-    pIB_boolean = dataset[var_name]
-  except:
-    print("Error Code 1: dataset not valid. The variable " + var_name + " cannot be found")
-    return 1
-  arr = pIB_boolean.values[:,0,:,:] 
-  #label method from scipy.ndimage.measurements is used
-  #structure = np.ones((3,3,3))
-  structure = [[[0,0,0],[0,1,0],[0,0,0]],\
-               [[0,1,0],[1,1,1],[0,1,0]],\
-               [[0,0,0],[0,1,0],[0,0,0]]] #this matrix defines what is defined as neighbour
-  #neighbour points are labeled with the same sequential number
-  arr,ncomponents=label(arr,structure)
-  #applying some filters
-  for t in np.arange(0,len(dataset.time.values-1)):
-    bool = arr[t,:,:] > 0
-    list = np.unique(arr[t,bool])
-    for l in list:
-      boolarr = arr[t,:,:] == l
-      n = np.count_nonzero(boolarr)
-      #filtering cluster dimension
-      if n < 9:
-        arr[t,:,:] = xr.where(boolarr, 0,arr[t,:,:])
-
-  arr = OrderIndexes(arr)
-  #initialize coords for new .nc
-  times = pIB_boolean.coords["time"].values
-  #plev = pIB_boolean.coords["plev"].values
-  lon = pIB_boolean.coords["lon"].values
-  lat = pIB_boolean.coords["lat"].values
-  #initialize dataset object for the new .nc
-  pIB_tracked = xr.DataArray(0,coords=[times,lat,lon],dims = ['time','lat','lon'])
-  pIB_tracked[:,:,:] = 0
-  pIB_tracked[:,0,:,:] = arr
-  #assign dataset to dataset which is now updated
-  dataset = dataset.assign(pIB_tracked = pIB_tracked)
-
-  #output data
-  if data_return == False:
-    dataset.to_netcdf(fn_out)
-  if data_return == True:
-    return dataset
-  else:
-    return 0
-
-
-def ContourTracking2D(dataset,fn_out = "",var_name = "DAV",data_return = False,exp_dic=True,
-                      char_dic=True,save_track = True, fn_dic= ''):
-  if fn_out=="" and data_return==False:
-    string = "Specify the kind of output you want"
-    print(string)
-    return 0
+def ContourTracking2D(dataset,var_name = "DAV",save_track = True, fn_dic= ''):
   try:
     pIB_boolean = dataset[var_name]
     #initialize the array for performing the tracking
@@ -593,82 +410,73 @@ def ContourTracking2D(dataset,fn_out = "",var_name = "DAV",data_return = False,e
   print('rearranging indexes')
   arr[:,:,:] = OrderIndexes(arr[:,:,:])
 
-  if char_dic == True:
-    #create a dictionary where the number of items is equal to the number of labels + 1
-    #add an empty first element to create correspondence between idx and label
+  #create a dictionary where the number of items is equal to the number of labels + 1
+  #add an empty first element to create correspondence between idx and label
+  dic.append({})
+  #find the idxs
+  idxs = np.unique(arr)
+  bool = idxs > 0
+  idxs = idxs[bool].astype(int)
+  #initialize the remaining dictionaries
+  for l in idxs:
     dic.append({})
-    #find the idxs
-    idxs = np.unique(arr)
-    bool = idxs > 0
-    idxs = idxs[bool].astype(int)
-    #initialize the remaining dictionaries
-    for l in idxs:
-      dic.append({})
-      #compute blocking events characteristics
-    """
-    CHARACTERISTICS MODULE
-    """
-    #initialize dictionary
-    for l in idxs:
-      dic[l]['persistence'] = 0
-      dic[l]['avg_area'] = 0
-      dic[l]['avg_aspect_ratio'] = 0
-      dic[l]['distance_traveled'] = 0
-      dic[l]['track'] = []
-      dic[l]['date'] = ''
-      dic[l]['time'] = 0
-    print('calculating characteristics')
-    print('persistence, track, date:')
-    #PERSISTENCE MODULE
-    past_events = []
-    len_time = len(times)-1
-    for t in tqdm(np.arange(0,len_time)):
-      bool = arr[t,:,:] > 0
-      today_events = np.unique(arr[t,bool]).astype(int) #labels at day t
-      for l in today_events:
-        if l not in past_events:
-          past_events.append(l)
-          if save_track == True:
-            #100 is a safe value for making the algorithm a little more efficient, as there is no event longer than 100 days.
-            dic[l]['track'] = CenterofMass(arr[t:min([t+100,len_time]),:,:],l,grid=2.5) #center of mass traj
-            ys,xs = dic[l]['track']
-            dist = 0
-            for i in range(len(xs)-1):
-              lon2km_coeff = np.cos(np.deg2rad(np.mean([ys[i+1],ys[i]])))*111.320
-              lat2km_coeff = 110.574
-              if xs[i+1]*xs[i] > 0: #same sign  
-                dist += (((xs[i+1]-xs[i])*lon2km_coeff)**2 + ((ys[i+1]-ys[i])*lat2km_coeff)**2)**0.5
-              if xs[i+1]*xs[i] <= 0 and abs(xs[i])>100 and xs[i] > 0: #different sign->boundary of the domain
-                dist += (((xs[i+1]-xs[i]+360)*lon2km_coeff)**2 + ((ys[i+1]-ys[i])*lat2km_coeff)**2)**0.5
-              if xs[i+1]*xs[i] <= 0 and abs(xs[i])>100 and xs[i] <= 0: #different sign->boundary of the domain
-                dist += (((xs[i+1]-xs[i]-360)*lon2km_coeff)**2 + ((ys[i+1]-ys[i])*lat2km_coeff)**2)**0.5
-            dic[l]['distance_traveled'] = dist
-            dic[l]['avg_dist_traveled'] = dist/len(xs) 
-            if dist < 0:
-              print(dist)
-            dic[l]['date'] = times[t]
-            dic[l]['time'] = t
-        dic[l]['persistence'] += 1
+    #compute blocking events characteristics
+  """
+  CHARACTERISTICS MODULE
+  """
+  #initialize dictionary
+  for l in idxs:
+    dic[l]['persistence'] = 0
+    dic[l]['avg_area'] = 0
+    dic[l]['avg_aspect_ratio'] = 0
+    dic[l]['distance_traveled'] = 0
+    dic[l]['track'] = []
+    dic[l]['date'] = ''
+    dic[l]['time'] = 0
+  print('calculating characteristics')
+  print('persistence, track, date:')
+  #PERSISTENCE MODULE
+  past_events = []
+  len_time = len(times)
+  for t in tqdm(range(len_time)):
+    bool = arr[t,:,:] > 0
+    today_events = np.unique(arr[t,bool]).astype(int) #labels at day t
+    for l in today_events:
+      dic[l]['persistence'] += 1
+      if l not in past_events:
+        past_events.append(l)
+        if save_track == True:
+          #100 is a safe value for making the algorithm a little more efficient, as there is no event longer than 100 days.
+          dic[l]['track'] = CenterofMass(arr[t:min([t+100,len_time]),:,:],l,grid=2.5) #center of mass traj
+          ys,xs = dic[l]['track']
+          dist = 0
+          for i in range(len(xs)-1):
+            lon2km_coeff = np.cos(np.deg2rad(np.mean([ys[i+1],ys[i]])))*111.320
+            lat2km_coeff = 110.574
+            if xs[i+1]*xs[i] > 0: #same sign  
+              dist += (((xs[i+1]-xs[i])*lon2km_coeff)**2 + ((ys[i+1]-ys[i])*lat2km_coeff)**2)**0.5
+            if xs[i+1]*xs[i] <= 0 and abs(xs[i])>100 and xs[i] > 0: #different sign->boundary of the domain
+              dist += (((xs[i+1]-xs[i]+360)*lon2km_coeff)**2 + ((ys[i+1]-ys[i])*lat2km_coeff)**2)**0.5
+            if xs[i+1]*xs[i] <= 0 and abs(xs[i])>100 and xs[i] <= 0: #different sign->boundary of the domain
+              dist += (((xs[i+1]-xs[i]-360)*lon2km_coeff)**2 + ((ys[i+1]-ys[i])*lat2km_coeff)**2)**0.5
+          dic[l]['distance_traveled'] = dist
+          dic[l]['avg_dist_traveled'] = dist/len(xs) 
+          dic[l]['date'] = times[t]
+          dic[l]['time'] = t
 
-    print('area and longitudinal extent')
-    #AREA and LONGITUDINAL EXTENT MODULE
-    for t in tqdm(range(len(times))):
-      today_events = np.unique(arr[t,:,:]).astype(int)
-      #remove '0' from the list
-      bool = today_events > 0
-      today_events = today_events[bool]
-      for l in today_events:
-        boolarr = arr[t,:,:] == l
-        area,lon_ext,lat_ext = Area(boolarr)
-        #updating aspect_ratio
-        dic[l]['avg_aspect_ratio'] += (lon_ext/lat_ext)/dic[l]['persistence']
-        #updating area
-        dic[l]['avg_area'] += area/dic[l]['persistence']  
+  print('area and longitudinal extent')
+  #AREA and LONGITUDINAL EXTENT MODULE
+  for t in tqdm(range(len_time)):
+    bool = arr[t,:,:] > 0
+    today_events = np.unique(arr[t,bool]).astype(int)       #remove '0' from the list
+    for l in today_events:
+      boolarr = arr[t,:,:] == l
+      area,lon_ext,lat_ext = Area(boolarr)
+      #updating aspect_ratio
+      dic[l]['avg_aspect_ratio'] += (lon_ext/lat_ext)/dic[l]['persistence']
+      #updating area
+      dic[l]['avg_area'] += area/dic[l]['persistence']  
 
-    #save dictionary
-    if exp_dic == True:
-        np.save(fn_dic,dic)
-  print(dic[0])
   print("number of labels: " + str(np.amax(arr)))
 
   #initialize coords for new .nc
@@ -682,6 +490,7 @@ def ContourTracking2D(dataset,fn_out = "",var_name = "DAV",data_return = False,e
 
   #assign new data_array to dataset
   dataset[var_name+"_tracked"] = DAV_tracked
+  dataset[var_name] = xr.where(DAV_tracked>0,1,0)
   
   """
   Update DAV_freq (if present) after area and persistence filter are applied.
@@ -689,21 +498,12 @@ def ContourTracking2D(dataset,fn_out = "",var_name = "DAV",data_return = False,e
   dataset[var_name + "_freq"] = xr.where(dataset[var_name+'_tracked']>0,1,0).mean(dim="time")*100
 
   #output data
-  if data_return == False:
-    print("saving netcdf in: " + fn_out)
-    dataset.to_netcdf(fn_out)
-  if data_return == True:
-    try:
-        return dataset,dic
-    except:
-        print('no dictionary to return')
-        return dataset
-  else:
-    return 0
+  return dataset,dic
 
 
-def FilterEvents(ds,dic=0,fn_dic='',fn_out = "",fn_dic_out="",var_name = "DAV",data_return = False,exp_dic=True,
-                  pers_min = 5,pers_max = 25,min_area = 500000,max_area=4e6,max_ar=2.4,max_avg_dist=1000):
+
+def FilterEvents(ds,dic,var_name = "DAV",
+                 pers_min = 5,min_area = 500000,max_avg_dist=1000):
 
   print("__Starting a Filtering process__")
   print("input: " + var_name + "_tracked")
@@ -724,14 +524,13 @@ def FilterEvents(ds,dic=0,fn_dic='',fn_out = "",fn_dic_out="",var_name = "DAV",d
   to_retain = []
   l = 1
   for event in tqdm(dic[1:]): #skip the first empty element
-    if event['persistence'] < pers_min or event['persistence'] > pers_max or event['avg_area'] < min_area or event['avg_area'] > max_area or event['avg_aspect_ratio'] > max_ar or event['avg_dist_traveled'] > max_avg_dist:
+    if event['persistence'] < pers_min or event['avg_area'] < min_area or event['avg_dist_traveled'] > max_avg_dist:
       ti = event['time']
       tf = event['time'] + event['persistence']
       arr[ti:tf,:,:] = np.where(arr[ti:tf,:,:]==l,0,arr[ti:tf,:,:])
     else:
       to_retain.append(l)
     l+=1 #didn't use enumerate to use the progress bar.
-
 
   #didn't find another way to update the dictionary. It is a bit strange
   dic_filtered = []
@@ -741,10 +540,6 @@ def FilterEvents(ds,dic=0,fn_dic='',fn_out = "",fn_dic_out="",var_name = "DAV",d
 
   print('rearranging indexes')
   arr = OrderIndexes(arr)
-
-  #save dictionary
-  if exp_dic==True:
-    np.save(fn_dic_out,dic_filtered)
 
   print("number of labels: " + str(np.amax(arr)))
 
@@ -766,17 +561,8 @@ def FilterEvents(ds,dic=0,fn_dic='',fn_out = "",fn_dic_out="",var_name = "DAV",d
   ds[var_name + "_freq"] = xr.where(ds[var_name+"_tracked"]>0,1,0).mean(dim="time")*100
 
   #output data
-  if data_return == False:
-    print("saving netcdf in: " + fn_out)
-    ds.to_netcdf(fn_out)
-  if data_return == True:
-    try:
-        return ds,dic_filtered
-    except:
-        print('no dictionary to return')
-        return ds
-  else:
-    return 0
+  return ds,dic_filtered
+
 
 
 
