@@ -286,7 +286,7 @@ def GHA(dataset,
       gha_reduced[t,:,:] = np.prod(np.where(zg_I-np.repeat(np.expand_dims(zg_mean,0),eulerian_persistence,axis=0)>multiplicative_threshold*zg_std,1,0), axis=0)
       #we also want to considered as blocked the last days of blocking, hence:
       gha_reduced[t,:,:] = np.logical_or(gha_reduced[t,:,:],(zg_I[0,:,:]-zg_mean>multiplicative_threshold*zg_std)*gha_reduced[t-1,:,:])
-    gha = xr.DataArray(data=np.zeros(zg.shape), 
+  gha = xr.DataArray(data=np.zeros(zg.shape), 
                      dims=["time","lat","lon"],
                      coords = dict(time=dataset["time"],lat=dataset["lat"],lon=dataset["lon"]))
   gha.loc[:,bound_down:bound_up,:] = gha_reduced
@@ -296,7 +296,62 @@ def GHA(dataset,
   dataset = dataset.assign(GHA_freq = gha_freq)
   return dataset
   
+"""
+Local Wave Activity Anomaly (GHA) index.
+This is a simple implementation of a Geopotential Height Anomaly index for istantaneous blocking detection adapted to the Local Wave Activity metric. This computes the daily geopotential height anomaly for each grid point of a given dataset by comparing the grid value at each day with its mean value over a 90 days time window centered on the same day. Moreover, the algorithm computes the standard deviation of the geopotential height anomaly over the same window. Once these quantities are calculated, a grid point identied as blocked if the anomaly exceeds the standard deviation moltiplied by a multiplicative threshold that is given to the index as a input variable.
+"""
+
+def LHA(dataset,
+        multiplicative_threshold = 1.26, 
+        eulerian_persistence=0,
+        ):
+  print("__Starting a LHA process__")
+  print("input: lwa , multiplicative threshold = " + str(multiplicative_threshold) + ' , eulerian_persistence = ' + str(eulerian_persistence))
+  bound_up=90
+  bound_down=30
+  #checking if dataset is right
+  
+  try:
+    lwa = - dataset["lwa"] #sign minus to make it work like z500
+    string = "data successfully received"
+  except:
+    string = "lwa variable was not found.\n\ Hint: check the content of your dataset."
+    print(string)
+    return 0
+
+  #define XArray using the costructor for an appropriate output
+  times = lwa.coords["time"]
+  lon = lwa.coords["lon"]
+  lat = lwa.coords["lat"]
     
+  #____CHECK GEOP HEIGHT____
+  lwa_reduced=lwa.loc[:,bound_down:bound_up,:].values
+  lha_reduced=np.zeros(lwa_reduced.shape)
+  for t in tqdm(range(45,len(times)-45)):
+    if eulerian_persistence==0:
+      lwa_I = lwa_reduced[t,:,:]
+      lwa_tmp = lwa_reduced[t-45:t+45,:,:]
+      lwa_mean = np.mean(lwa_tmp,axis=0)
+      lwa_std = np.std(lwa_tmp,axis=0)
+      lha_reduced[t,:,:] = np.where(lwa_I-lwa_mean>multiplicative_threshold*lwa_std,1,0)
+    if eulerian_persistence>0:
+      lwa_I = lwa_reduced[t:t+eulerian_persistence,:,:]
+      lwa_tmp = lwa_reduced[t-45:t+45,:,:]
+      lwa_mean = np.mean(lwa_tmp,axis=0)
+      lwa_std = np.std(lwa_tmp,axis=0)
+      lha_reduced[t,:,:] = np.prod(np.where(lwa_I-np.repeat(np.expand_dims(lwa_mean,0),eulerian_persistence,axis=0)>multiplicative_threshold*lwa_std,1,0), axis=0)
+      #we also want to considered as blocked the last days of blocking, hence:
+      lha_reduced[t,:,:] = np.logical_or(lha_reduced[t,:,:],(lwa_I[0,:,:]-lwa_mean>multiplicative_threshold*lwa_std)*lha_reduced[t-1,:,:])
+  lha = xr.DataArray(data=np.zeros(lwa.shape), 
+                     dims=["time","lat","lon"],
+                     coords = dict(time=dataset["time"],lat=dataset["lat"],lon=dataset["lon"]))
+  lha.loc[:,bound_down:bound_up,:] = lha_reduced
+  dataset = dataset.assign(LHA=lha)
+  
+  lha_freq = sum(lha)*100/lha.values.shape[0]
+  dataset = dataset.assign(LHA_freq = lha_freq)
+  return dataset
+      
 
 def TM(dataset,
        output):
