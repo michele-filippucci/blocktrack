@@ -230,7 +230,6 @@ def DAV(dataset,
   #print(pIB)
   DAV.loc[:,30:75,:] = TuplepIB[:,:,:]  
   #print(pIB)
-  	
   dataset = dataset.assign(DAV=DAV)
   
   DAV_freq = sum(DAV)*100/DAV.values.shape[0]
@@ -244,11 +243,10 @@ This is a simple implementation of a Geopotential Height Anomaly index for istan
 
 def GHA(dataset,
         multiplicative_threshold = 1.26, 
-        eulerian_persistence=0,
         ):
   print("__Starting a GHA process__")
-  print("input: zg500 , multiplicative threshold = " + str(multiplicative_threshold) + ' , eulerian_persistence = ' + str(eulerian_persistence))
-  bound_up=90
+  print("input: zg500 , multiplicative threshold = " + str(multiplicative_threshold))
+  bound_up=80
   bound_down=30
   #checking if dataset is right
   
@@ -268,24 +266,25 @@ def GHA(dataset,
   #____CHECK GEOP HEIGHT____
   #ERA5 dataset uses geopotential, not height
   if zg.values[0,0,0] > 10000:
-      zg = zg/9.80665
+    zg = zg/9.80665
+  #define zg and gha in the index domain.
+  #converting everything to numpy array to optimize computational expense.
   zg_reduced=zg.loc[:,bound_down:bound_up,:].values
   gha_reduced=np.zeros(zg_reduced.shape)
+  #define the domain of the reference distribution.
+  zg_ref=zg.loc[:,45:80,:].values
+  zg = zg.values
+  
   for t in tqdm(range(45,len(times)-45)):
-    if eulerian_persistence==0:
-      zg_I = zg_reduced[t,:,:]
-      zg_tmp = zg_reduced[t-45:t+45,:,:]
-      zg_mean = np.mean(zg_tmp,axis=0)
-      zg_std = np.std(zg_tmp,axis=0)
-      gha_reduced[t,:,:] = np.where(zg_I-zg_mean>multiplicative_threshold*zg_std,1,0)
-    if eulerian_persistence>0:
-      zg_I = zg_reduced[t:t+eulerian_persistence,:,:]
-      zg_tmp = zg_reduced[t-45:t+45,:,:]
-      zg_mean = np.mean(zg_tmp,axis=0)
-      zg_std = np.std(zg_tmp,axis=0)
-      gha_reduced[t,:,:] = np.prod(np.where(zg_I-np.repeat(np.expand_dims(zg_mean,0),eulerian_persistence,axis=0)>multiplicative_threshold*zg_std,1,0), axis=0)
-      #we also want to considered as blocked the last days of blocking, hence:
-      gha_reduced[t,:,:] = np.logical_or(gha_reduced[t,:,:],(zg_I[0,:,:]-zg_mean>multiplicative_threshold*zg_std)*gha_reduced[t-1,:,:])
+    #compute the anomalies with respect to a three months period for the index domain
+    anomalies = zg_reduced[t,:,:] - np.mean(zg_reduced[t-45:t+45,:,:],axis=0)
+    #compute the reference anomaly distribution for the three months period
+    anomalies_ref = zg_ref[t-45:t+45,:,:] - np.repeat(np.expand_dims(np.mean(zg_ref[t-45:t+45,:,:],axis=0),axis=0),90,axis=0)
+    ref_mean = np.mean(anomalies_ref,axis=(0,1,2))
+    ref_std = np.std(anomalies_ref,axis=(0,1,2))
+    #compare the anomalies at time t with the reference distribution.
+    gha_reduced[t,:,:] = np.where(anomalies-ref_mean>multiplicative_threshold*ref_std,1,0)
+    
   gha = xr.DataArray(data=np.zeros(zg.shape), 
                      dims=["time","lat","lon"],
                      coords = dict(time=dataset["time"],lat=dataset["lat"],lon=dataset["lon"]))
@@ -301,18 +300,18 @@ Local Wave Activity Anomaly (GHA) index.
 This is a simple implementation of a Geopotential Height Anomaly index for istantaneous blocking detection adapted to the Local Wave Activity metric. This computes the daily geopotential height anomaly for each grid point of a given dataset by comparing the grid value at each day with its mean value over a 90 days time window centered on the same day. Moreover, the algorithm computes the standard deviation of the geopotential height anomaly over the same window. Once these quantities are calculated, a grid point identied as blocked if the anomaly exceeds the standard deviation moltiplied by a multiplicative threshold that is given to the index as a input variable.
 """
 
-def LHA(dataset,
+def LWAA(dataset,
         multiplicative_threshold = 1.26, 
-        eulerian_persistence=0,
         ):
-  print("__Starting a LHA process__")
-  print("input: lwa , multiplicative threshold = " + str(multiplicative_threshold) + ' , eulerian_persistence = ' + str(eulerian_persistence))
-  bound_up=90
+  print("__Starting a LWA anomaly process__")
+  print("input: zg500 , multiplicative threshold = " + str(multiplicative_threshold))
+  bound_up=80
   bound_down=30
   #checking if dataset is right
   
   try:
-    lwa = - dataset["lwa"] #sign minus to make it work like z500
+  #add sign - to keep computatoins similar to zg
+    lwa = - dataset["lwa"]
     string = "data successfully received"
   except:
     string = "lwa variable was not found.\n\ Hint: check the content of your dataset."
@@ -323,33 +322,33 @@ def LHA(dataset,
   times = lwa.coords["time"]
   lon = lwa.coords["lon"]
   lat = lwa.coords["lat"]
-    
-  #____CHECK GEOP HEIGHT____
+
+  #define lwa and LWAA in the index domain.
+  #converting everything to numpy array to optimize computational expense.
   lwa_reduced=lwa.loc[:,bound_down:bound_up,:].values
-  lha_reduced=np.zeros(lwa_reduced.shape)
+  lwaa_reduced=np.zeros(lwa_reduced.shape)
+  #define the domain of the reference distribution.
+  lwa_ref=lwa.loc[:,45:80,:].values
+  lwa = lwa.values
+  
   for t in tqdm(range(45,len(times)-45)):
-    if eulerian_persistence==0:
-      lwa_I = lwa_reduced[t,:,:]
-      lwa_tmp = lwa_reduced[t-45:t+45,:,:]
-      lwa_mean = np.mean(lwa_tmp,axis=0)
-      lwa_std = np.std(lwa_tmp,axis=0)
-      lha_reduced[t,:,:] = np.where(lwa_I-lwa_mean>multiplicative_threshold*lwa_std,1,0)
-    if eulerian_persistence>0:
-      lwa_I = lwa_reduced[t:t+eulerian_persistence,:,:]
-      lwa_tmp = lwa_reduced[t-45:t+45,:,:]
-      lwa_mean = np.mean(lwa_tmp,axis=0)
-      lwa_std = np.std(lwa_tmp,axis=0)
-      lha_reduced[t,:,:] = np.prod(np.where(lwa_I-np.repeat(np.expand_dims(lwa_mean,0),eulerian_persistence,axis=0)>multiplicative_threshold*lwa_std,1,0), axis=0)
-      #we also want to considered as blocked the last days of blocking, hence:
-      lha_reduced[t,:,:] = np.logical_or(lha_reduced[t,:,:],(lwa_I[0,:,:]-lwa_mean>multiplicative_threshold*lwa_std)*lha_reduced[t-1,:,:])
-  lha = xr.DataArray(data=np.zeros(lwa.shape), 
+    #compute the anomalies with respect to a three months period for the index domain
+    anomalies = lwa_reduced[t,:,:] - np.mean(lwa_reduced[t-45:t+45,:,:],axis=0)
+    #compute the reference anomaly distribution for the three months period
+    anomalies_ref = lwa_ref[t-45:t+45,:,:] - np.repeat(np.expand_dims(np.mean(lwa_ref[t-45:t+45,:,:],axis=0),axis=0),90,axis=0)
+    ref_mean = np.mean(anomalies_ref,axis=(0,1,2))
+    ref_std = np.std(anomalies_ref,axis=(0,1,2))
+    #compare the anomalies at time t with the reference distribution.
+    lwaa_reduced[t,:,:] = np.where(anomalies-ref_mean>multiplicative_threshold*ref_std,1,0)
+    
+  lwaa = xr.DataArray(data=np.zeros(lwa.shape), 
                      dims=["time","lat","lon"],
                      coords = dict(time=dataset["time"],lat=dataset["lat"],lon=dataset["lon"]))
-  lha.loc[:,bound_down:bound_up,:] = lha_reduced
-  dataset = dataset.assign(LHA=lha)
+  lwaa.loc[:,bound_down:bound_up,:] = lwaa_reduced
+  dataset = dataset.assign(LWAA=lwaa)
   
-  lha_freq = sum(lha)*100/lha.values.shape[0]
-  dataset = dataset.assign(LHA_freq = lha_freq)
+  lwaa_freq = sum(lwaa)*100/lwaa.values.shape[0]
+  dataset = dataset.assign(LWAA_freq = lwaa_freq)
   return dataset
       
 
@@ -437,7 +436,7 @@ def ContourTracking2D(dataset,var_name = "DAV",save_track = True, fn_dic= ''):
     TRACKING IN TIME
     """
     if t > 0:
-      diff = times[t]-times[t-1]
+      diff = (times[t]-times[t-1]).days
       bool1 = arr[t-1,:,:] > 0
       bool2 = arr[t,:,:] > 0
       comp1 = np.unique(arr[t-1,bool1])
@@ -446,8 +445,8 @@ def ContourTracking2D(dataset,var_name = "DAV",save_track = True, fn_dic= ''):
         boolarr1 = arr[t-1,:,:] == l1
         for l2 in comp2:
           #first we use a filter for avoiding lagrangian tracking between distant days
-          diff = int(diff)
-          diff = diff/(1e9*60*60*24) #conversion from ms to days
+          #diff = diff.days
+          #diff = diff/(1e9*60*60*24) #conversion from ms to days
           if diff > 1:
             break
           #then we find link between clusters
