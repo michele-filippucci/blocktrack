@@ -10,9 +10,9 @@ start_time = time.time()
 
 print("Starting operation")
 
-data_dir='/Users/michelefilippucci/Data/ERA5/geop/'
-fn = data_dir + "ERA5_northem_2.5x2.5_zg500_daily_1940-2023.nc"
-work_dir='/Users/michelefilippucci/Data/ERA5/gr_tracking/'
+data_dir='/archive/michele/data/ERA5/'
+fn = data_dir + "ERA5_northem_2.5x2.5_zg_daily_1959-2021.nc"
+work_dir='/home/michele/DATA/blocktrack_debug/'
 fn_out_unfilt = work_dir + "ERA5_northem_2.5x2.5_zg_DAV_tracked_unfilt_daily_1940-2023.nc"
 fn_out = work_dir + "ERA5_northem_2.5x2.5_zg_DAV_tracked_daily_1940-2023.nc"
 fn_dic_unfilt = work_dir + "dictionaries/ERA5_northem_2.5x2.5_zg_DAV_tracked_unfilt_daily_1940-2023_DIC.npy"
