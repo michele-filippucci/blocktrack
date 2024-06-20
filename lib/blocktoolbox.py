@@ -389,13 +389,15 @@ def TM(dataset,
   file.close()
   return 0
 
-def ContourTracking2D(dataset,var_name = "DAV",save_track = True, fn_dic= ''):
+def ContourTracking2D(dataset,var_name = "DAV",geop_name='zg',overlap=0.5,save_track = True,save_intesity=True, fn_dic= ''):
   try:
     pIB_boolean = dataset[var_name]
+    zg = dataset[geop_name].values
+    zg_clim = zg.mean(axis=0)
     #initialize the array for performing the tracking
     arr = pIB_boolean.values
   except:
-    print("Error Code 1: dataset not valid. The variable " + var_name + " cannot be found")
+    print("Error Code 1: dataset not valid. The variable " + var_name + " or " + geop_name + " cannot be found")
     return 1
   
   #initialiazing a blocking characteristics dictionary
@@ -455,7 +457,7 @@ def ContourTracking2D(dataset,var_name = "DAV",save_track = True, fn_dic= ''):
           n = np.count_nonzero(boolarr)
           n_ex = np.count_nonzero(boolarr1)
           n_new = np.count_nonzero(boolarr2)
-          if n > n_ex/2 or n > n_new/2: #50% overlap
+          if n > n_ex*overlap or n > n_new*overlap: #overlap criterium
             #new label which is always different
             arr[t,:,:] = xr.where(boolarr2,l1,arr[t,:,:])
         if diff > 1:
@@ -487,6 +489,8 @@ def ContourTracking2D(dataset,var_name = "DAV",save_track = True, fn_dic= ''):
     dic[l]['track'] = []
     dic[l]['date'] = ''
     dic[l]['time'] = 0
+    if save_intesity==True:
+      dic[l]['intensity'] = 0
   print('calculating characteristics')
   print('persistence, track, date:')
   #PERSISTENCE MODULE
@@ -518,7 +522,7 @@ def ContourTracking2D(dataset,var_name = "DAV",save_track = True, fn_dic= ''):
           dic[l]['date'] = times[t]
           dic[l]['time'] = t
 
-  print('area and longitudinal extent')
+  print('area, intensity and longitudinal extent')
   #AREA and LONGITUDINAL EXTENT MODULE
   for t in tqdm(range(len_time)):
     bool = arr[t,:,:] > 0
@@ -526,13 +530,17 @@ def ContourTracking2D(dataset,var_name = "DAV",save_track = True, fn_dic= ''):
     for l in today_events:
       boolarr = arr[t,:,:] == l
       area,lon_ext,lat_ext = Area(boolarr)
+      if save_intesity==True:
+        #the intensity is computed through the average anomaly associated to the blocked grid cells.
+        an_tmp = abs(np.reshape(zg[t,:,:]-zg_clim,boolarr.shape))
+        dic[l]['intensity'] += np.sum(an_tmp[boolarr])/(len(an_tmp[boolarr])*dic[l]['persistence'])
       #updating aspect_ratio
       dic[l]['avg_aspect_ratio'] += (lon_ext/lat_ext)/dic[l]['persistence']
       #updating area
-      dic[l]['avg_area'] += area/dic[l]['persistence']  
-
+      dic[l]['avg_area'] += area/dic[l]['persistence']
+      
   print("number of labels: " + str(np.amax(arr)))
-
+  
   #initialize coords for new .nc
   times = pIB_boolean.coords["time"].values
   lon = pIB_boolean.coords["lon"].values
