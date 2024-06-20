@@ -2,69 +2,14 @@
 ______________________________________
 //////////////        \\\\\\\\\\\\\\\\
 ////////                     \\\\\\\\\
-||||||||  BLOCKTRACK LIBRARY  ||||||||
+||||||||      BLOCKTRACK      ||||||||
 \\\\\\\\_____          ______/////////
 \\\\\\\\\\\\\\________////////////////
 
 Author: Michele Filippucci, UniTN - IUSS Pavia
-With the help and avice of: Paolo Davini, CNR-Isac
+With the help and advice of: Paolo Davini, CNR-Isac
 
-This library is a set of tools for the analysis of atmospheric blocking in the northern hemisphere.
-The index used for atm blocking diagnostic is described in "Davini et al. - 2012 - Bidimensional diagnostics, variability, and trends of northern hemisphere blocking". Some differences and features are added: the persistence and area criteriamare applied at the level of tracking. Tracking also allow the user to perform lagrangian analysis.
-
-This library was developed using daily datasets.
-
-The requirements for this library are:
-Python              3.8.10
-xarray              0.18.2
-numpy               1.20.3
-scipy               1.6.3
-tqdm                4.61.1
-matplotlib          3.4.2
-Cartopy             0.19.0.post1
-
-______________________________________
-//////////////        \\\\\\\\\\\\\\\\
-////////                     \\\\\\\\\
-||||||||  LIST OF FUNCTIONS:  ||||||||
-\\\\\\\\_____          ______/////////
-\\\\\\\\\\\\\\________////////////////
-
-_ _ _ GetIndex(ds,coord="",key="") _ _ _ 
-
-This function find the index of the numpy array correspondent to a ceratin variable value. For example if we want to find the index correspondent
-to a 40° latitude then we use coord = "lat" and key = "40".
-ds : dataset with desired coordinates
-coord : coordinate name
-key : coordinate value
-
-_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/
-
-_ _ _ Area(arr,boolarr,lats=[0,90],lons=[-180,180],grid=2.5) _ _ _ 
-
-This method calculate the area of a portion of a matrix in km^2.The portion of the matrix is given as a boolean array which is True 
-where the area has to be calculated. lons and lats lists define the boundaries of the original array grid defines the dimension of a grid point.
-! note that the array isn't (lon,lat) but (lat,lon) instead
-
-_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/
-
-_ _ _ OrderIndexes(arr) _ _ _ 
-
-This function is necessary for the tracking algorithm to work. Its purpose is to take a tracked matrix that is zero where there is no blocking
-and that is = label where there is a labeled blocking event and re-order and re-assign the label so that they are unique and increasingly ordered.
-arr : tracked matrix
-
-_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/
-
-_ _ _ CenterofMass(tuple,label,grid=2.5) _ _ _ 
-
-This function is based on the homonym scipy function and returns a list of xs (longitudes) and ys (latitudes) that are the center of mass
-coordinates for each time-step of the dataset.
-tuple: tracked matrix
-label: label of the event
-grid: grid dimension needed to convert the index in latitudes and longitudes.
-
-_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/
+This code is a set of tools for the Lagrangian analysis of atmospheric blocking in the Northern Hemisphere.
 """
 
 import numpy as np
@@ -79,13 +24,25 @@ import math
 
 np.set_printoptions(precision=2,threshold=np.inf)
 
-def GetIndex(ds,coord="",key=""):
-  index = 0
-  for x in ds[coord].values:
-    if str(x) == key:
-      break
-    index += 1
-  return index
+'''
+_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/
+
+Area: this method calculate the area of a portion of a matrix in km^2.The portion of the matrix is given as a boolean array which is True 
+where the area has to be calculated. lons and lats lists define the boundaries of the original array grid defines the dimension of a grid point.
+! note that the array is (lat,lon)
+
+Inputs:
+boolarr: Portion of the matrix, Boolean Numpy Array
+lats: Latitudinal boundaries of the boolarr, List
+lons: Longitudinal boundaries of the boolarr, List
+grid: grid dimension needed to convert the index in latitudes and longitudes, Float
+
+Returns:
+Area: The area of the given region expressed in km^2, Float
+lon_ext: The longitudinal extent of the given region expressed in km^2, Float
+lat_ext: The latitudinal extent of the given region expressed in km^2, Float
+
+'''
 
 def Area(boolarr,lat_lim=[0,90],lon_lim=[-180,180],grid=2.5):
   #This method calculate the area of a portion of a matrix in km^2.
@@ -120,6 +77,19 @@ def Area(boolarr,lat_lim=[0,90],lon_lim=[-180,180],grid=2.5):
         
   return area,lon_ext,lat_ext
   
+'''
+_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/
+
+OrderIndexes: This function is necessary for the tracking algorithm to work. Its purpose is to take a tracked matrix that is zero where there is no blocking
+and that is = label where there is a labeled blocking event and re-order and re-assign the label so that they are unique and increasingly ordered.
+
+Inputs:
+arr : tracked matrix, Numpy Array
+
+Returns:
+arr: reordered tracked matrix, Numpy Array
+
+'''
 
 def OrderIndexes(arr):
   examined_idxs = []
@@ -137,11 +107,23 @@ def OrderIndexes(arr):
 
   return arr
 
-"""
-This function returns the coordinates in space of the center of mass
-of a blocking event. The object returned is a list of the coordinates
-at each time step.
-"""
+'''
+_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/
+
+CenterofMass: This function is based on the homonym scipy function and returns a list of xs (longitudes) and ys (latitudes) that are the center of mass
+coordinates for each time-step of the dataset.
+NOTE: this method doesn't consider the sphericity of Earth, so the center of mass results slightly displaced north from its actual position.
+
+Inputs:
+tuple: tracked matrix, Numpy Array
+label: label of the event, Integer
+grid: grid dimension needed to convert the index in latitudes and longitudes., Float
+
+Returns:
+x: list of latitudinal positions of the center of mass, List
+y: list of longitudinal positions of the center of mass, List
+'''
+
 
 def CenterofMass(tuple,label,grid=2.5):
   time = np.shape(tuple)[0]
@@ -176,10 +158,25 @@ def CenterofMass(tuple,label,grid=2.5):
       #an error of 1.25 degrees.
   return x,y
 
-"""
-This function is capable of creating an nc file identical (located in fn_out)
-to the BlockTools.dataset with additional attributes
-"""  
+'''
+_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/
+
+DAV: This function computes the blocked grid points in a gridded dataset following the geopotential height gradient reversal index
+described in Davini et al. (2012). The blocked grid points are marked with a '1' boolean value in a matrix with the same dimension
+as the geopotential height that is '0' everywhere else. The matrix is stored in a copy dataset of the input dataset, which is then
+given as an output.
+
+Inputs:
+dataset: input dataset that must contain the daily geopotential height at 500hPa in the area [-180,180]°lon [0,90]°lat. The rank of
+the input data must be 2, Xarray Dataset
+mer_gradient_filter: flag that determines whether the meridional gradient filter is applied, as described in Davini et al. 2012, 
+Boolean
+
+Returns:
+dataset: the input dataset + the matrix defining the blocked grid points
+
+'''
+
 def DAV(dataset,
         mer_gradient_filter = False
         ):
@@ -236,10 +233,23 @@ def DAV(dataset,
   dataset = dataset.assign(DAV_freq = DAV_freq)
   return dataset
   
-"""
-Geopotential Height Anomaly (GHA) index.
-This is a simple implementation of a Geopotential Height Anomaly index for istantaneous blocking detection. This computes the daily geopotential height anomaly for each grid point of a given dataset by comparing the grid value at each day with its mean value over a 90 days time window centered on the same day. Moreover, the algorithm computes the standard deviation of the geopotential height anomaly over the same window. Once these quantities are calculated, a grid point identied as blocked if the anomaly exceeds the standard deviation moltiplied by a multiplicative threshold that is given to the index as a input variable.
-"""
+'''
+_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/
+
+GHA: This function computes the blocked grid points in a gridded dataset following the geopotential height anomaly index
+described in Woollings et al. 2018. The blocked grid points are marked with a '1' boolean value in a matrix with the same dimension
+as the geopotential height that is '0' everywhere else. The matrix is stored in a copy dataset of the input dataset, which is then
+given as an output.
+
+Inputs:
+dataset: input dataset that must contain the daily geopotential height at 500hPa in the area [-180,180]°lon [0,90]°lat. The rank of
+the input data must be 2, Xarray Dataset
+multiplicative_threshold: a number that determines how large the anomaly should be in terms of sigmas 
+(anomaly > multiplicative_threshold*sigma), Float
+
+Returns:
+dataset: the input dataset + the matrix defining the blocked grid points
+'''
 
 def GHA(dataset,
         multiplicative_threshold = 1.26, 
@@ -295,10 +305,23 @@ def GHA(dataset,
   dataset = dataset.assign(GHA_freq = gha_freq)
   return dataset
   
-"""
-Local Wave Activity Anomaly (GHA) index.
-This is a simple implementation of a Geopotential Height Anomaly index for istantaneous blocking detection adapted to the Local Wave Activity metric. This computes the daily geopotential height anomaly for each grid point of a given dataset by comparing the grid value at each day with its mean value over a 90 days time window centered on the same day. Moreover, the algorithm computes the standard deviation of the geopotential height anomaly over the same window. Once these quantities are calculated, a grid point identied as blocked if the anomaly exceeds the standard deviation moltiplied by a multiplicative threshold that is given to the index as a input variable.
-"""
+'''
+_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/
+
+LWAA: This function computes the blocked grid points in a gridded dataset following an index similar to GHA but taking the 
+Local Wave Activity as an input variable. The blocked grid points are marked with a '1' boolean value in a matrix with the same dimension
+as the geopotential height that is '0' everywhere else. The matrix is stored in a copy dataset of the input dataset, which is then
+given as an output.
+
+Inputs:
+dataset: input dataset that must contain the daily Local Wave Activity in the area [-180,180]°lon [0,90]°lat. The rank of
+the input data must be 2, Xarray Dataset
+multiplicative_threshold: a number that determines how large the anomaly should be in terms of sigmas 
+(anomaly > multiplicative_threshold*sigma), Float
+
+Returns:
+dataset: the input dataset + the matrix defining the blocked grid points
+'''
 
 def LWAA(dataset,
         multiplicative_threshold = 1.26, 
@@ -350,46 +373,43 @@ def LWAA(dataset,
   lwaa_freq = sum(lwaa)*100/lwaa.values.shape[0]
   dataset = dataset.assign(LWAA_freq = lwaa_freq)
   return dataset
-      
 
-def TM(dataset,
-       output):
-  #checking if dataset is right
-  try:
-    zg = dataset["zg"]
-    string = "data successfully received"
-  except:
-    string = "zg variable was not found."
-    print(string)
-    return 0
-  #____CHECK GEOP HEIGHT____
-  #ERA5 dataset uses geopotential, not height
-  if zg.values[0,0,0] > 10000:
-      zg = zg.values/9.80665
-  #.values gives tuples
-  print(dataset["lat"])
-  N = GetIndex(dataset,"lat","75.0") #north
-  C = GetIndex(dataset,"lat","60.0") #center
-  S = GetIndex(dataset,"lat","45.0") #south
-  print(N,C,S)
-  file = open(output, "a")
-  for i in range(len(dataset["time"])):
-    for j in range(len(dataset["lon"])):
-      string = ""
-      for k in range(12): 
-        #the feature matrix is composed of 12 geopotential values 15 deg north and south
-        #of the ispected grid point.
-        string += str(zg[i,0,S+k,j]) + " "
-      GHGS = (+ zg[i,C,k] - zg[i,S,k])/15.0
-      GHGN = (- zg[i,C,k] + zg[i,N,k])/15.0
-      flag = int(GHGN < -10.0) * int(GHGS > 0.)
-      string += str(flag)
-#        print(string)
-      file.write(string + "\n")
-  file.close()
-  return 0
+'''
+_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/
 
-def ContourTracking2D(dataset,var_name = "DAV",geop_name='zg',overlap=0.5,save_track = True,save_intesity=True, fn_dic= ''):
+ContourTracking2D: This function performs the tracking of the blocking events. It takes as input the output dataset of any of 
+the functions DAV, GHA or LWAA. It then returns a dataset similar to the input dataset but with an additional variable that
+has the same dimensions as the geopotential height field and identifies each blocked grid cell with a label that is unique for
+each blocking event. In addition to this, this function returns a dictionary object where all the characteristics of the blocking
+events are stored.
+
+Inputs:
+dataset: input dataset that must be the output of any of the functions DAV, GHA or LWAA, Xarray Dataset
+var_name: the name of the variable contained inside of the dataset ('DAV', 'GHA' or 'LWAA'), String
+geop_name: the name of the geopotential height contained inside of the dataset. This is needed for computing the intensity, String
+overlap: the overlap criteria sets the portion of area that two consecutive blocking days must share to be considered as the same
+block. It must be in the range [0,1], Float
+save_track: flag to set whether the center of mass has to be computed.
+save_intensity: flag to set whehter the intensity has to be computed.
+
+Returns:
+dataset: the input dataset + the tracked events matrix
+dic: a list of dictionaries containing the features of the tracked events. The element 0 of the list is null and the index of the
+other elements correspond to the label of the blocking event. The structure of one element of the list is the following:
+dic[event_label]:
+{'persistence': the number of days the blocking event lasts. Int,
+'avg_area': the average area of the blocking event during its life cycle. Float [km^2], 
+'avg_aspect_ratio': the average aspect ratio (lon_ext/lat_ext) of the blocking event during its life-cycle. Float, 
+'distance_traveled': the total distance traveled during the event life-cycle. Float [km], 
+'track': the track of the center of mass of the blocking event. (xs (List),ys(List)), 
+'date': the date of the first day of the blocking event. np.DataTime64 (first blocking day),
+'intensity': the average magnitude of the geop height anomaly in the blocked area during the blocking life-cycle. Float [m], 
+'avg_dist_traveled': distance_traveled/persistence. Float [km]}
+
+'''
+
+
+def ContourTracking2D(dataset,var_name = "DAV",geop_name='zg',overlap=0.5,save_track = True,save_intesity=True):
   try:
     pIB_boolean = dataset[var_name]
     zg = dataset[geop_name].values
@@ -438,7 +458,11 @@ def ContourTracking2D(dataset,var_name = "DAV",geop_name='zg',overlap=0.5,save_t
     TRACKING IN TIME
     """
     if t > 0:
-      diff = (times[t]-times[t-1]).days
+      try:
+        diff = (times[t]-times[t-1])
+        diff = int(diff)/(1e9*60*60*24)
+      except:
+        diff = (times[t]-times[t-1]).days
       bool1 = arr[t-1,:,:] > 0
       bool2 = arr[t,:,:] > 0
       comp1 = np.unique(arr[t-1,bool1])
@@ -488,7 +512,6 @@ def ContourTracking2D(dataset,var_name = "DAV",geop_name='zg',overlap=0.5,save_t
     dic[l]['distance_traveled'] = 0
     dic[l]['track'] = []
     dic[l]['date'] = ''
-    dic[l]['time'] = 0
     if save_intesity==True:
       dic[l]['intensity'] = 0
   print('calculating characteristics')
@@ -562,7 +585,24 @@ def ContourTracking2D(dataset,var_name = "DAV",geop_name='zg',overlap=0.5,save_t
   #output data
   return dataset,dic
 
+'''
+_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/
 
+FilterEvents: This function applies a set of filters to the blocking events detected through ContourTracking2D. It takes as an input
+both the dataset and the dictionaries produced by the tracking algorithm and it updates them following a persistence, area and
+distance_traveled criteria.
+
+Inputs:
+dataset: input dataset that must be the output ContourTracking2D, Xarray Dataset
+var_name: the name of the variable contained inside of the dataset ('DAV', 'GHA' or 'LWAA'), String
+pers_min: the minimum persistence that a blocking event must have, Int
+min_area: the minimum area of a blocking event in km^2, Float
+max_avg_dist: the maximum per day distance traveled by a blocking event in km, Float
+
+Returns:
+dataset: the fitered input dataset
+dic: the filtered input dictionary
+'''
 
 def FilterEvents(ds,dic,var_name = "DAV",
                  pers_min = 5,min_area = 500000,max_avg_dist=1000):
@@ -577,10 +617,6 @@ def FilterEvents(ds,dic,var_name = "DAV",
   except:
     print("Error Code 1: dataset not valid. The variable " + var_name + "_tracked" + " cannot be found")
     return 1
-
-  #import dictionary
-  if dic == 0:
-      dic = np.load(fn_dic,allow_pickle=True)
 
   print('applying filters')
   to_retain = []
