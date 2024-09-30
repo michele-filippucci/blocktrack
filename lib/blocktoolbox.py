@@ -481,7 +481,7 @@ def ContourTracking2D(dataset,var_name = "DAV",geop_name='zg',overlap=0.5,save_t
           n = np.count_nonzero(boolarr)
           n_ex = np.count_nonzero(boolarr1)
           n_new = np.count_nonzero(boolarr2)
-          if n > n_ex*overlap or n > n_new*overlap: #overlap criterium
+          if n > n_ex*overlap:# or n > n_new*overlap: #overlap criterium
             #new label which is always different
             arr[t,:,:] = xr.where(boolarr2,l1,arr[t,:,:])
         if diff > 1:
@@ -507,13 +507,12 @@ def ContourTracking2D(dataset,var_name = "DAV",geop_name='zg',overlap=0.5,save_t
   #initialize dictionary
   for l in idxs:
     dic[l]['persistence'] = 0
-    dic[l]['avg_area'] = 0
-    dic[l]['avg_aspect_ratio'] = 0
-    dic[l]['distance_traveled'] = 0
+    dic[l]['area'] = []
+    dic[l]['aspect_ratio'] = []
+    dic[l]['distance_traveled'] = []
     dic[l]['track'] = []
     dic[l]['date'] = ''
-    if save_intesity==True:
-      dic[l]['intensity'] = 0
+    dic[l]['intensity'] = []
   print('calculating characteristics')
   print('persistence, track, date:')
   #PERSISTENCE MODULE
@@ -530,18 +529,19 @@ def ContourTracking2D(dataset,var_name = "DAV",geop_name='zg',overlap=0.5,save_t
           #100 is a safe value for making the algorithm a little more efficient, as there is no event longer than 100 days.
           dic[l]['track'] = CenterofMass(arr[t:min([t+100,len_time]),:,:],l,grid=2.5) #center of mass traj
           ys,xs = dic[l]['track']
-          dist = 0
+          dist = []
           for i in range(len(xs)-1):
             lon2km_coeff = np.cos(np.deg2rad(np.mean([ys[i+1],ys[i]])))*111.320
             lat2km_coeff = 110.574
             if xs[i+1]*xs[i] > 0: #same sign  
-              dist += (((xs[i+1]-xs[i])*lon2km_coeff)**2 + ((ys[i+1]-ys[i])*lat2km_coeff)**2)**0.5
+              dist.append((((xs[i+1]-xs[i])*lon2km_coeff)**2 + ((ys[i+1]-ys[i])*lat2km_coeff)**2)**0.5)
+            if xs[i+1]*xs[i] < 0 and abs(xs[i])<=100: #different sign near 0°lon
+              dist.append((((xs[i+1]-xs[i])*lon2km_coeff)**2 + ((ys[i+1]-ys[i])*lat2km_coeff)**2)**0.5)
             if xs[i+1]*xs[i] <= 0 and abs(xs[i])>100 and xs[i] > 0: #different sign->boundary of the domain
-              dist += (((xs[i+1]-xs[i]+360)*lon2km_coeff)**2 + ((ys[i+1]-ys[i])*lat2km_coeff)**2)**0.5
+              dist.append((((xs[i+1]-xs[i]+360)*lon2km_coeff)**2 + ((ys[i+1]-ys[i])*lat2km_coeff)**2)**0.5)
             if xs[i+1]*xs[i] <= 0 and abs(xs[i])>100 and xs[i] <= 0: #different sign->boundary of the domain
-              dist += (((xs[i+1]-xs[i]-360)*lon2km_coeff)**2 + ((ys[i+1]-ys[i])*lat2km_coeff)**2)**0.5
+              dist.append((((xs[i+1]-xs[i]-360)*lon2km_coeff)**2 + ((ys[i+1]-ys[i])*lat2km_coeff)**2)**0.5)
           dic[l]['distance_traveled'] = dist
-          dic[l]['avg_dist_traveled'] = dist/len(xs) 
           dic[l]['date'] = times[t]
           dic[l]['time'] = t
 
@@ -556,11 +556,11 @@ def ContourTracking2D(dataset,var_name = "DAV",geop_name='zg',overlap=0.5,save_t
       if save_intesity==True:
         #the intensity is computed through the average anomaly associated to the blocked grid cells.
         an_tmp = abs(np.reshape(zg[t,:,:]-zg_clim,boolarr.shape))
-        dic[l]['intensity'] += np.sum(an_tmp[boolarr])/(len(an_tmp[boolarr])*dic[l]['persistence'])
+        dic[l]['intensity'].append(np.sum(an_tmp[boolarr])/(len(an_tmp[boolarr])))
       #updating aspect_ratio
-      dic[l]['avg_aspect_ratio'] += (lon_ext/lat_ext)/dic[l]['persistence']
+      dic[l]['aspect_ratio'].append((lon_ext/lat_ext))
       #updating area
-      dic[l]['avg_area'] += area/dic[l]['persistence']
+      dic[l]['area'].append(area)
       
   print("number of labels: " + str(np.amax(arr)))
   
@@ -596,7 +596,7 @@ Inputs:
 dataset: input dataset that must be the output ContourTracking2D, Xarray Dataset
 var_name: the name of the variable contained inside of the dataset ('DAV', 'GHA' or 'LWAA'), String
 pers_min: the minimum persistence that a blocking event must have, Int
-min_area: the minimum area of a blocking event in km^2, Float
+min_avg_area: the minimum area of a blocking event in km^2, Float
 max_avg_dist: the maximum per day distance traveled by a blocking event in km, Float
 
 Returns:
@@ -605,7 +605,7 @@ dic: the filtered input dictionary
 '''
 
 def FilterEvents(ds,dic,var_name = "DAV",
-                 pers_min = 5,min_area = 500000,max_avg_dist=1000):
+                 pers_min = 5,min_avg_area = 500000,max_avg_dist=1000):
 
   print("__Starting a Filtering process__")
   print("input: " + var_name + "_tracked")
@@ -622,16 +622,29 @@ def FilterEvents(ds,dic,var_name = "DAV",
   to_retain = []
   l = 1
   for event in tqdm(dic[1:]): #skip the first empty element
-    if event['persistence'] < pers_min or event['avg_area'] < min_area or event['avg_dist_traveled'] > max_avg_dist:
-      ti = event['time']
-      tf = event['time'] + event['persistence']
-      arr[ti:tf,:,:] = np.where(arr[ti:tf,:,:]==l,0,arr[ti:tf,:,:])
-    else:
-      to_retain.append(l)
-    l+=1 #didn't use enumerate to use the progress bar.
+    try:
+      if event['persistence'] < pers_min or sum(event['area'])/len(event['area']) < min_avg_area or sum(event['distance_traveled'])/len(event['distance_traveled']) > max_avg_dist:
+        ti = event['time']
+        tf = event['time'] + event['persistence']
+        arr[ti:tf,:,:] = np.where(arr[ti:tf,:,:]==l,0,arr[ti:tf,:,:])
+  #      if event['persistence'] > 4:
+  #        print(l)
+  #        print(event)
+  #        try:
+  #          print(sum(event['distance_traveled'])/len(event['distance_traveled']))
+  #          print(sum(event['area'])/len(event['area']))
+  #        except:
+  #          print('1 day event')
+      else:
+        to_retain.append(l)
+      l+=1 #didn't use enumerate to use the progress bar.
+    except:
+      print(l)
+  #   print(event)
 
   #didn't find another way to update the dictionary. It is a bit strange
   dic_filtered = []
+  dic_filtered.append({})
   for l,event in enumerate(dic):
     if l in to_retain:
       dic_filtered.append(event)
