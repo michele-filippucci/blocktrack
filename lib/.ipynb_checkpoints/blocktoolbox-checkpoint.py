@@ -304,6 +304,63 @@ def GHA(dataset,
   gha_freq = sum(gha)*100/gha.values.shape[0]
   dataset = dataset.assign(GHA_freq = gha_freq)
   return dataset
+
+'''
+_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/
+
+MIX: This function computes the blocked grid points in a gridded dataset similarly to the hybrid IBI described in Madison et al. 2024. 
+The blocked grid points are marked with a '1' boolean value in a matrix with the same dimension as the geopotential height that is 
+'0' everywhere else. The matrix is stored in a copy dataset of the input dataset, which is then given as an output.
+
+Inputs:
+dataset: input dataset that must contain the daily geopotential height at 500hPa in the area [-180,180]°lon [0,90]°lat. The rank of
+the input data must be 2, Xarray Dataset
+multiplicative_threshold: a number that determines how large the anomaly should be in terms of sigmas 
+(anomaly > multiplicative_threshold*sigma), Float
+
+Returns:
+dataset: the input dataset + the matrix defining the blocked grid points
+'''
+
+def MIX(dataset,
+        multiplicative_threshold = 1.26,
+        overlap = 0 #can be between 0 and 1. 0 makes it same as Madison et al. 2024
+        ):
+
+  dav_diagnostic = DAV(dataset)['DAV'].values
+  gha_diagnostic = GHA(dataset,multiplicative_threshold=1.26)['GHA'].values
+  mix_diagnostic = np.zeros(dav_diagnostic.shape)
+  #loop over time
+  print("__Starting a MIX process__")
+  print("input: zg500 , multiplicative threshold = " + str(multiplicative_threshold) + ", overlap = " + str(overlap))
+  for t in tqdm(range(dav_diagnostic.shape[0])):
+    #label method from scipy.ndimage.measurements is used
+    structure = [[0,1,0],\
+                 [1,1,1],\
+                 [0,1,0]] #this matrix defines what is defined as neighbour
+
+    #neighbour points are labeled with the same sequential number
+    dav_diagnostic[t,:,:],ncomponents=label(dav_diagnostic[t,:,:],structure)
+    gha_diagnostic[t,:,:],ncomponents=label(gha_diagnostic[t,:,:],structure)
+
+    for l in np.unique(dav_diagnostic[t,:,:]):
+      bool_dav = xr.where(dav_diagnostic[t,:,:]==l,1,0)
+      for l in np.unique(gha_diagnostic[t,bool_dav]):
+        bool_gha = xr.where(gha_diagnostic[t,:,:]==l,1,0)
+        count_dav = np.sum(bool_dav,axis=(0,1)) 
+        count_cross = np.sum(bool_dav*bool_gha,axis=(0,1))
+        if count_cross/count_dav > overlap:
+          mix_diagnostic[t,:,:] += bool_gha
+
+  mix_dataarray = xr.DataArray(data=mix_diagnostic, 
+                     dims=["time","lat","lon"],
+                     coords = dict(time=dataset["time"],lat=dataset["lat"],lon=dataset["lon"]))
+  
+  dataset = dataset.assign(MIX=mix_dataarray)
+  
+  mix_freq = sum(mix_dataarray)*100/mix_dataarray.values.shape[0]
+  dataset = dataset.assign(MIX_freq = mix_freq)
+  return dataset  
   
 '''
 _/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/
