@@ -324,7 +324,7 @@ dataset: the input dataset + the matrix defining the blocked grid points
 
 def MIX(dataset,
         multiplicative_threshold = 1.26,
-        overlap = 0 #can be between 0 and 1. 0 makes it same as Madison et al. 2024
+        overlap_area = 15000 #can be between 0 and 1. 0 makes it same as Madison et al. 2024
         ):
 
   dav_diagnostic = DAV(dataset)['DAV'].values
@@ -332,7 +332,7 @@ def MIX(dataset,
   mix_diagnostic = np.zeros(dav_diagnostic.shape)
   #loop over time
   print("__Starting a MIX process__")
-  print("input: zg500 , multiplicative threshold = " + str(multiplicative_threshold) + ", overlap = " + str(overlap))
+  print("input: zg500 , multiplicative threshold = " + str(multiplicative_threshold) + ", overlap_area [km^2] = " + str(overlap_area))
   for t in tqdm(range(dav_diagnostic.shape[0])):
     #label method from scipy.ndimage.measurements is used
     structure = [[0,1,0],\
@@ -342,15 +342,30 @@ def MIX(dataset,
     #neighbour points are labeled with the same sequential number
     dav_diagnostic[t,:,:],ncomponents=label(dav_diagnostic[t,:,:],structure)
     gha_diagnostic[t,:,:],ncomponents=label(gha_diagnostic[t,:,:],structure)
-
+    
     for l in np.unique(dav_diagnostic[t,:,:]):
-      bool_dav = xr.where(dav_diagnostic[t,:,:]==l,1,0)
-      for l in np.unique(gha_diagnostic[t,bool_dav]):
-        bool_gha = xr.where(gha_diagnostic[t,:,:]==l,1,0)
-        count_dav = np.sum(bool_dav,axis=(0,1)) 
-        count_cross = np.sum(bool_dav*bool_gha,axis=(0,1))
-        if count_cross/count_dav > overlap:
-          mix_diagnostic[t,:,:] += bool_gha
+      if l!=0:
+        #print('l'+str(l))
+        bool_dav = np.where(dav_diagnostic[t,:,:]==l,1,0)
+        for k in np.unique(gha_diagnostic[t,:,:]):
+          #print('k'+str(k))
+          if k!=0:
+            bool_gha = np.where(gha_diagnostic[t,:,:]==k,1,0)
+            bool_cross = bool_dav*bool_gha
+            #print(bool_cross.shape)
+            if np.any(bool_cross > 0):
+              area_cross,lon_ext,lat_ext = Area(bool_cross)
+              if area_cross > overlap_area:
+                #print('found one')
+                mix_diagnostic[t,:,:] += bool_gha            
+            #count_dav = np.sum(bool_dav,axis=(0,1))
+            #print(count_dav)
+            #count_cross = np.sum(bool_dav*bool_gha,axis=(0,1))
+            #print(count_cross)
+            #if count_cross/count_dav > overlap:
+              #print('found one')
+              #mix_diagnostic[t,:,:] += bool_gha
+
 
   mix_dataarray = xr.DataArray(data=mix_diagnostic, 
                      dims=["time","lat","lon"],
@@ -590,7 +605,7 @@ def ContourTracking2D(dataset,var_name = "DAV",geop_name='zg',overlap=0.5,save_t
           for i in range(len(xs)-1):
             lon2km_coeff = np.cos(np.deg2rad(np.mean([ys[i+1],ys[i]])))*111.320
             lat2km_coeff = 110.574
-            if xs[i+1]*xs[i] > 0: #same sign  
+            if xs[i+1]*xs[i] >= 0: #same sign  
               dist.append((((xs[i+1]-xs[i])*lon2km_coeff)**2 + ((ys[i+1]-ys[i])*lat2km_coeff)**2)**0.5)
             if xs[i+1]*xs[i] < 0 and abs(xs[i])<=100: #different sign near 0°lon
               dist.append((((xs[i+1]-xs[i])*lon2km_coeff)**2 + ((ys[i+1]-ys[i])*lat2km_coeff)**2)**0.5)
@@ -679,27 +694,15 @@ def FilterEvents(ds,dic,var_name = "DAV",
   to_retain = []
   l = 1
   for event in tqdm(dic[1:]): #skip the first empty element
-    try:
-      if event['persistence'] < pers_min or sum(event['area'])/len(event['area']) < min_avg_area or sum(event['distance_traveled'])/len(event['distance_traveled']) > max_avg_dist:
+    if event['persistence'] < pers_min or sum(event['area'])/len(event['area']) < min_avg_area or sum(event['distance_traveled'])/len(event['distance_traveled']) > max_avg_dist:
         ti = event['time']
         tf = event['time'] + event['persistence']
         arr[ti:tf,:,:] = np.where(arr[ti:tf,:,:]==l,0,arr[ti:tf,:,:])
-  #      if event['persistence'] > 4:
-  #        print(l)
-  #        print(event)
-  #        try:
-  #          print(sum(event['distance_traveled'])/len(event['distance_traveled']))
-  #          print(sum(event['area'])/len(event['area']))
-  #        except:
-  #          print('1 day event')
-      else:
-        to_retain.append(l)
-      l+=1 #didn't use enumerate to use the progress bar.
-    except:
-      print(l)
-  #   print(event)
+    else:
+      to_retain.append(l)
+    l+=1 #didn't use enumerate to use the progress bar.
 
-  #didn't find another way to update the dictionary. It is a bit strange
+  #update the dictionary
   dic_filtered = []
   dic_filtered.append({})
   for l,event in enumerate(dic):
