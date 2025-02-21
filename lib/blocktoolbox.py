@@ -1,10 +1,8 @@
 """
 ______________________________________
-//////////////        \\\\\\\\\\\\\\\\
-////////                     \\\\\\\\\
+
 ||||||||      BLOCKTRACK      ||||||||
-\\\\\\\\_____          ______/////////
-\\\\\\\\\\\\\\________////////////////
+
 
 Author: Michele Filippucci, UniTN - IUSS Pavia
 With the help and advice of: Paolo Davini, CNR-Isac
@@ -25,7 +23,6 @@ import math
 np.set_printoptions(precision=2,threshold=np.inf)
 
 '''
-_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/
 
 Area: this method calculate the area of a portion of a matrix in km^2.The portion of the matrix is given as a boolean array which is True 
 where the area has to be calculated. lons and lats lists define the boundaries of the original array grid defines the dimension of a grid point.
@@ -78,8 +75,6 @@ def Area(boolarr,lat_lim=[0,90],lon_lim=[-180,180],grid=2.5):
   return area,lon_ext,lat_ext
   
 '''
-_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/
-
 OrderIndexes: This function is necessary for the tracking algorithm to work. Its purpose is to take a tracked matrix that is zero where there is no blocking
 and that is = label where there is a labeled blocking event and re-order and re-assign the label so that they are unique and increasingly ordered.
 
@@ -108,8 +103,6 @@ def OrderIndexes(arr):
   return arr
 
 '''
-_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/
-
 CenterofMass: This function is based on the homonym scipy function and returns a list of xs (longitudes) and ys (latitudes) that are the center of mass
 coordinates for each time-step of the dataset.
 NOTE: this method doesn't consider the sphericity of Earth, so the center of mass results slightly displaced north from its actual position.
@@ -156,11 +149,9 @@ def CenterofMass(tuple,label,grid=2.5):
       y.append(cm[1])
       #this method is exact for even long-shape. When shape is odd there is
       #an error of 1.25 degrees.
-  return x,y
+  return [x,y]
 
 '''
-_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/
-
 DAV: This function computes the blocked grid points in a gridded dataset following the geopotential height gradient reversal index
 described in Davini et al. (2012). The blocked grid points are marked with a '1' boolean value in a matrix with the same dimension
 as the geopotential height that is '0' everywhere else. The matrix is stored in a copy dataset of the input dataset, which is then
@@ -234,8 +225,6 @@ def DAV(dataset,
   return dataset
   
 '''
-_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/
-
 GHA: This function computes the blocked grid points in a gridded dataset following the geopotential height anomaly index
 described in Woollings et al. 2018. The blocked grid points are marked with a '1' boolean value in a matrix with the same dimension
 as the geopotential height that is '0' everywhere else. The matrix is stored in a copy dataset of the input dataset, which is then
@@ -306,8 +295,6 @@ def GHA(dataset,
   return dataset
 
 '''
-_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/
-
 MIX: This function computes the blocked grid points in a gridded dataset similarly to the hybrid IBI described in Madison et al. 2024. 
 The blocked grid points are marked with a '1' boolean value in a matrix with the same dimension as the geopotential height that is 
 '0' everywhere else. The matrix is stored in a copy dataset of the input dataset, which is then given as an output.
@@ -378,8 +365,6 @@ def MIX(dataset,
   return dataset  
   
 '''
-_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/
-
 LWAA: This function computes the blocked grid points in a gridded dataset following an index similar to GHA but taking the 
 Local Wave Activity as an input variable. The blocked grid points are marked with a '1' boolean value in a matrix with the same dimension
 as the geopotential height that is '0' everywhere else. The matrix is stored in a copy dataset of the input dataset, which is then
@@ -447,8 +432,6 @@ def LWAA(dataset,
   return dataset
 
 '''
-_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/
-
 ContourTracking2D: This function performs the tracking of the blocking events. It takes as input the output dataset of any of 
 the functions DAV, GHA or LWAA. It then returns a dataset similar to the input dataset but with an additional variable that
 has the same dimensions as the geopotential height field and identifies each blocked grid cell with a label that is unique for
@@ -658,8 +641,6 @@ def ContourTracking2D(dataset,var_name = "DAV",geop_name='zg',overlap=0.5,save_t
   return dataset,dic
 
 '''
-_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/-\_/
-
 FilterEvents: This function applies a set of filters to the blocking events detected through ContourTracking2D. It takes as an input
 both the dataset and the dictionaries produced by the tracking algorithm and it updates them following a persistence, area and
 distance_traveled criteria.
@@ -669,7 +650,7 @@ dataset: input dataset that must be the output ContourTracking2D, Xarray Dataset
 var_name: the name of the variable contained inside of the dataset ('DAV', 'GHA' or 'LWAA'), String
 pers_min: the minimum persistence that a blocking event must have, Int
 min_avg_area: the minimum area of a blocking event in km^2, Float
-max_avg_dist: the maximum per day distance traveled by a blocking event in km, Float
+max_dist: the maximum per day distance traveled by a blocking event in km, Float
 
 Returns:
 dataset: the fitered input dataset
@@ -677,7 +658,7 @@ dic: the filtered input dictionary
 '''
 
 def FilterEvents(ds,dic,var_name = "DAV",
-                 pers_min = 5,min_avg_area = 500000,max_avg_dist=1000):
+                 pers_min = 5,min_avg_area = 500000,max_dist=1000):
 
   print("__Starting a Filtering process__")
   print("input: " + var_name + "_tracked")
@@ -692,22 +673,93 @@ def FilterEvents(ds,dic,var_name = "DAV",
 
   print('applying filters')
   to_retain = []
-  l = 1
-  for event in tqdm(dic[1:]): #skip the first empty element
-    if event['persistence'] < pers_min or sum(event['area'])/len(event['area']) < min_avg_area or sum(event['distance_traveled'])/len(event['distance_traveled']) > max_avg_dist:
-        ti = event['time']
-        tf = event['time'] + event['persistence']
-        arr[ti:tf,:,:] = np.where(arr[ti:tf,:,:]==l,0,arr[ti:tf,:,:])
-    else:
-      to_retain.append(l)
-    l+=1 #didn't use enumerate to use the progress bar.
+  label_check = 12
+  counter = 0
+  counter_left = 0
+  counter_right = 0
 
+  for l in tqdm(range(1,len(dic))):#skip the first empty element
+    #max distance filter: if the event moves too much only the steady part of the event is retained.
+    #iterate this part multiple times to select only the stationary part of the event.
+    for m in range(50): #50 is a sufficient number of iterations
+      check = False
+      day = 1
+      for dist in dic[l]['distance_traveled']:
+        if dist > max_dist:
+          check = True
+          break
+        day += 1
+          
+      if check:
+        counter += 1   
+        #if counter == label_check:
+        #  print(dic[l])
+        if day > dic[l]['persistence']/2:
+          ti = dic[l]['time'] + day
+          tf = dic[l]['time'] + dic[l]['persistence']        
+          #remove the second part of the dic[l]
+          arr[ti:tf,:,:] = np.where(arr[ti:tf,:,:]==(l),0,arr[ti:tf,:,:])          
+          counter_left +=1 
+          #update dictionary
+          dic[l]['persistence'] = day
+          dic[l]['area'] = dic[l]['area'][:day]
+          dic[l]['aspect_ratio'] = dic[l]['aspect_ratio'][:day]
+          dic[l]['distance_traveled'] = dic[l]['distance_traveled'][:(day-1)]
+          dic[l]['track'][0] = dic[l]['track'][0][:day]
+          dic[l]['track'][1] = dic[l]['track'][1][:day]
+          dic[l]['intensity'] = dic[l]['intensity'][:day]
+          #dic[l]['old_label'] = l
+  
+        if day <= dic[l]['persistence']/2:
+          ti = dic[l]['time'] 
+          tf = dic[l]['time'] + day
+          #remove the first part of the dic[l]
+          arr[ti:tf,:,:] = np.where(arr[ti:tf,:,:]==(l),0,arr[ti:tf,:,:])  
+          counter_right +=1 
+          #update dictionary
+          dic[l]['persistence'] = dic[l]['persistence'] - day
+          dic[l]['area'] = dic[l]['area'][day:]
+          dic[l]['aspect_ratio'] = dic[l]['aspect_ratio'][day:]
+          dic[l]['distance_traveled'] = dic[l]['distance_traveled'][(day-1):]
+          dic[l]['track'][0] = dic[l]['track'][0][day:]
+          dic[l]['track'][1] = dic[l]['track'][1][day:]
+          dic[l]['intensity'] = dic[l]['intensity'][day:]
+          dic[l]['time'] = dic[l]['time'] + day
+          dic[l]['date'] = dic[l]['date'] + np.timedelta64(day,'D')
+          
+      if dic[l]['persistence'] >= pers_min and sum(dic[l]['area'])/len(dic[l]['area']) >= min_avg_area:
+        to_retain.append(l)      
+      else:
+        ti = dic[l]['time']
+        tf = dic[l]['time'] + dic[l]['persistence']
+        arr[ti:tf,:,:] = np.where(arr[ti:tf,:,:]==l,0,arr[ti:tf,:,:])   
+      #if counter == label_check and check:
+      #  print(dic[l])
+      #  print(l in to_retain)
+      
   #update the dictionary
   dic_filtered = []
   dic_filtered.append({})
-  for l,event in enumerate(dic):
-    if l in to_retain:
-      dic_filtered.append(event)
+  examined_labels = []
+  print('creating new dictionary')
+  for t in tqdm(range(len(arr[:,0,0]))):
+    labels = np.unique(arr[t,:,:])
+    for lab in labels:
+      if lab != 0 and lab in to_retain and lab not in examined_labels:
+        dic_filtered.append(dic[lab])
+        if any(x>max_dist for x in dic[lab]['distance_traveled']):
+          print(dic[lab]['distance_traveled'])
+        examined_labels.append(lab)
+  #print(len(to_retain))
+  #print(len(examined_labels))
+  #print(len(dic_filtered))
+  #for l,event in enumerate(dic):
+  #  if l in to_retain:
+  #    dic_filtered.append(event)
+
+  print('number of splitted event:' + str(counter))
+  print('number of splitted event (left):' + str(counter_left))
+  print('number of splitted event (right):' + str(counter_right))
 
   print('rearranging indexes')
   arr = OrderIndexes(arr)
