@@ -20,7 +20,7 @@ import cartopy.util as cutil
 import sys
 import math
 
-np.set_printoptions(precision=2,threshold=np.inf)
+#np.set_printoptions(precision=2,threshold=np.inf)
 
 '''
 
@@ -41,6 +41,24 @@ lat_ext: The latitudinal extent of the given region expressed in km^2, Float
 
 '''
 
+def Deseasonalize(data_arr):
+  #compute monthly mean
+  seasonal_mean = data_arr.groupby('time.dayofyear').mean(dim='time')
+  total_mean = data_arr.mean(dim='time')
+  deseasonalized_data_arr = data_arr.groupby('time.dayofyear') - seasonal_mean + total_mean
+  return deseasonalized_data_arr
+
+def Detrend(da, dim='time', deg=1):
+  # detrend along a single dimension
+  p = da.polyfit(dim=dim, deg=deg)
+  fit = xr.polyval(da[dim], p.polyfit_coefficients)
+  mean = da.mean(dim)
+  return da - fit + mean
+
+def Rolling_mean(data_arr):
+  rolling_mean = data_arr.rolling(time=90, center=True, min_periods=1).mean()
+  return rolling_mean
+
 def Area(boolarr,lat_lim=[0,90],lon_lim=[-180,180],grid=2.5):
   #This method calculate the area of a portion of a matrix in km^2.
   #This function can also compute the latitudinal and longitudinal extent of the blocking event. 
@@ -51,10 +69,6 @@ def Area(boolarr,lat_lim=[0,90],lon_lim=[-180,180],grid=2.5):
   #! note that the array isn't (lon,lat) but (lat,lon) instead
   area = 0
   
-  #quantities needed to compute the longitudinal and latitudinal extent as well
-  lats = []
-  lons = []
-  
   lon_len = len(boolarr[0,:])
   lat_len = len(boolarr[:,0])
 
@@ -62,17 +76,10 @@ def Area(boolarr,lat_lim=[0,90],lon_lim=[-180,180],grid=2.5):
   for ilon in range(lon_len):
     for jlat in range(lat_len):
       if boolarr[jlat,ilon] == True:
-        #extent
-        lats.append(lat_lim[0] + jlat*grid)
-        lons.append(lon_lim[0] + ilon*grid)
         #area        
         area += np.cos(np.deg2rad(lat_lim[0] + jlat*grid))*(grid*circearth/360)**2
-  #finding the extent
-  #here the latitudinal position of the event is identified as the mean of the latitudes list, coherently with the center of mass method
-  lon_ext = (np.amax(lons) - np.amin(lons))*np.cos(np.deg2rad(np.mean(lats))) + grid
-  lat_ext = np.amax(lats) - np.amin(lats) + grid
         
-  return area,lon_ext,lat_ext
+  return area
   
 '''
 OrderIndexes: This function is necessary for the tracking algorithm to work. Its purpose is to take a tracked matrix that is zero where there is no blocking
@@ -140,16 +147,35 @@ def CenterofMass(tuple,label,grid=2.5):
       #we then have to translate the matrix 180 eastward
       if cm[1] < 180/grid:
         cm = np.array([cm[0]*grid,cm[1]*grid-180+180])
-        #print("minor: " + str(cm))
       else:
         if cm[1] >= 180/grid:
           cm = np.array([cm[0]*grid,cm[1]*grid-180-180])
-        #print("major: " + str(cm))
       x.append(cm[0])
       y.append(cm[1])
       #this method is exact for even long-shape. When shape is odd there is
       #an error of 1.25 degrees.
   return [x,y]
+
+def CenterofMass_singleday(boolarr,grid=2.5):
+    if True in boolarr and not True in boolarr[:,0]:
+      cm = center_of_mass(boolarr)
+      cm = np.array([cm[0]*grid,cm[1]*grid-180])
+    if True in boolarr[:,0]: #this is the case of an event on the boundary
+      #first we double the matrix and center it on the boundary
+      shp = np.shape(boolarr)
+      updt = np.zeros(shp*np.array((1,2)))
+      updt[:,:shp[1]]=boolarr
+      updt[:,shp[1]:]=boolarr
+      boolarr = updt[:,int(shp[1]/2):int(shp[1]*3/2)]
+      cm = center_of_mass(boolarr)
+      #we then have to translate the matrix 180 eastward
+      if cm[1] < 180/grid:
+        cm = np.array([cm[0]*grid,cm[1]*grid-180+180])
+      else:
+        if cm[1] >= 180/grid:
+          cm = np.array([cm[0]*grid,cm[1]*grid-180-180])
+    return cm
+  
 
 '''
 DAV: This function computes the blocked grid points in a gridded dataset following the geopotential height gradient reversal index
@@ -169,18 +195,19 @@ dataset: the input dataset + the matrix defining the blocked grid points
 '''
 
 def DAV(dataset,
-        mer_gradient_filter = False
+        mer_gradient_filter = False,
+        tyrlis_correction = False
         ):
   
   print("__Starting a DAV process__")
-  print("input: zg500 , mer_gradient_filter = " + str(mer_gradient_filter) )
+  print("input: zg500 , mer_gradient_filter = " + str(mer_gradient_filter)+ ", tyrlis_correction = " + str(tyrlis_correction))
   
   #checking if dataset is right
   try:
     zg = dataset["zg"]
     string = "data successfully received"
   except:
-    string = "zg variable was not found.\n\ Hint: check the content of your dataset."
+    string = "zg variable was not found. Hint: check the content of your dataset."
     print(string)
     return 0
 
@@ -196,13 +223,17 @@ def DAV(dataset,
 
   #.values gives tuples
   #compute GHGS/GHGN
-  GHGS = (+ zg.loc[:,30.0:75.0,:].values - zg.loc[:,15.0:60.0,:].values)/15.0
-  GHGN = (- zg.loc[:,30.0:75.0,:].values + zg.loc[:,45.0:90.0,:].values)/15.0
-
+  GHGS = (+ zg.loc[:,30.0:75.0,:].values - zg.loc[:,15.0:60.0,:]).values/15.0
+  GHGN = (- zg.loc[:,30.0:75.0,:].values + zg.loc[:,45.0:90.0,:]).values/15.0
+  
   #look for grid points where the conditions for pIB are satisfied
   #using where function from xarray
   #first term is GHGN condition, second term is GHGS condition. Tuples are multiplied
   #(no matrix product)
+
+  if tyrlis_correction == True:
+    #GHGN[:,12:,:] -= 10
+    GHGN[:,:,:] -= 10
   if mer_gradient_filter == False:
     TuplepIB = xr.where(GHGN < -10.0, 1.0, 0.0) * xr.where(GHGS > 0., 1.0 , 0.0)
   #filter for meridional gradient
@@ -210,6 +241,7 @@ def DAV(dataset,
     GHGS2 = (+ zg.loc[:,15:60,:].values - zg.loc[:,0:45,:].values)/15.0
     TuplepIB = xr.where(GHGS2 < -5,1.0,0.0)*xr.where(GHGN < -10.0, 1.0, 0.0)*\
                xr.where(GHGS > 0., 1.0 , 0.0)
+    
   #check = TuplepIB
   #define XArray using the costructor for an appropriate output
   DAV = xr.DataArray(data=np.zeros(zg.shape), 
@@ -253,7 +285,7 @@ def GHA(dataset,
     zg = dataset["zg"]
     string = "data successfully received"
   except:
-    string = "zg variable was not found.\n\ Hint: check the content of your dataset."
+    string = "zg variable was not found. Hint: check the content of your dataset."
     print(string)
     return 0
 
@@ -279,10 +311,9 @@ def GHA(dataset,
     anomalies = zg_reduced[t,:,:] - np.mean(zg_reduced[t-45:t+45,:,:],axis=0)
     #compute the reference anomaly distribution for the three months period
     anomalies_ref = zg_ref[t-45:t+45,:,:] - np.repeat(np.expand_dims(np.mean(zg_ref[t-45:t+45,:,:],axis=0),axis=0),90,axis=0)
-    ref_mean = np.mean(anomalies_ref,axis=(0,1,2))
     ref_std = np.std(anomalies_ref,axis=(0,1,2))
     #compare the anomalies at time t with the reference distribution.
-    gha_reduced[t,:,:] = np.where(anomalies-ref_mean>multiplicative_threshold*ref_std,1,0)
+    gha_reduced[t,:,:] = np.where(anomalies>multiplicative_threshold*ref_std,1,0)
     
   gha = xr.DataArray(data=np.zeros(zg.shape), 
                      dims=["time","lat","lon"],
@@ -394,7 +425,7 @@ def LWAA(dataset,
     lwa = - dataset["lwa"]
     string = "data successfully received"
   except:
-    string = "lwa variable was not found.\n\ Hint: check the content of your dataset."
+    string = "lwa variable was not found. Hint: check the content of your dataset."
     print(string)
     return 0
 
@@ -444,8 +475,7 @@ var_name: the name of the variable contained inside of the dataset ('DAV', 'GHA'
 geop_name: the name of the geopotential height contained inside of the dataset. This is needed for computing the intensity, String
 overlap: the overlap criteria sets the portion of area that two consecutive blocking days must share to be considered as the same
 block. It must be in the range [0,1], Float
-save_track: flag to set whether the center of mass has to be computed.
-save_intensity: flag to set whehter the intensity has to be computed.
+max_dist: the maximum distance the center of mass of a block can travel from one day to another to be considered as the same event.
 
 Returns:
 dataset: the input dataset + the tracked events matrix
@@ -453,27 +483,26 @@ dic: a list of dictionaries containing the features of the tracked events. The e
 other elements correspond to the label of the blocking event. The structure of one element of the list is the following:
 dic[event_label]:
 {'persistence': the number of days the blocking event lasts. Int,
-'avg_area': the average area of the blocking event during its life cycle. Float [km^2], 
-'avg_aspect_ratio': the average aspect ratio (lon_ext/lat_ext) of the blocking event during its life-cycle. Float, 
+'area': the areas of the blocking event during its life cycle. Float [km^2], 
 'distance_traveled': the total distance traveled during the event life-cycle. Float [km], 
 'track': the track of the center of mass of the blocking event. (xs (List),ys(List)), 
 'date': the date of the first day of the blocking event. np.DataTime64 (first blocking day),
 'intensity': the average magnitude of the geop height anomaly in the blocked area during the blocking life-cycle. Float [m], 
-'avg_dist_traveled': distance_traveled/persistence. Float [km]}
+'dist_traveled': distance traveled during blocking life cycle. Float [km]}
 
 '''
 
 
-def ContourTracking2D(dataset,var_name = "DAV",geop_name='zg',overlap=0.5,save_track = True,save_intesity=True):
-  try:
-    pIB_boolean = dataset[var_name]
-    zg = dataset[geop_name].values
-    zg_clim = zg.mean(axis=0)
-    #initialize the array for performing the tracking
-    arr = pIB_boolean.values
-  except:
-    print("Error Code 1: dataset not valid. The variable " + var_name + " or " + geop_name + " cannot be found")
-    return 1
+def ContourTracking2D(dataset,var_name = "DAV",geop_name='zg',overlap=0.5,max_dist=1400,grid=2.5):
+  pIB_boolean = dataset[var_name]
+  zg = dataset[geop_name]
+  if zg.values[0,0,0] > 10000:
+    zg = zg/9.80665
+  zg_rollmean = Rolling_mean(zg).values
+  #zg_clim = zg.mean(dim='time').values
+  zg = zg.values
+  #initialize the array for performing the tracking
+  arr = pIB_boolean.values
   
   #initialiazing a blocking characteristics dictionary
   dic = []
@@ -526,8 +555,6 @@ def ContourTracking2D(dataset,var_name = "DAV",geop_name='zg',overlap=0.5,save_t
         boolarr1 = arr[t-1,:,:] == l1
         for l2 in comp2:
           #first we use a filter for avoiding lagrangian tracking between distant days
-          #diff = diff.days
-          #diff = diff/(1e9*60*60*24) #conversion from ms to days
           if diff > 1:
             break
           #then we find link between clusters
@@ -536,7 +563,26 @@ def ContourTracking2D(dataset,var_name = "DAV",geop_name='zg',overlap=0.5,save_t
           n = np.count_nonzero(boolarr)
           n_ex = np.count_nonzero(boolarr1)
           n_new = np.count_nonzero(boolarr2)
-          if n > n_ex*overlap:# or n > n_new*overlap: #overlap criterium
+
+          #dist_module
+          dist = 0
+          if n > 0:
+            cm_ex = CenterofMass_singleday(boolarr1)
+            cm_new = CenterofMass_singleday(boolarr2)
+            lon2km_coeff = np.cos(np.deg2rad(np.mean([cm_new[0],cm_ex[0]])))*111.320
+            lat2km_coeff = 110.574
+            if cm_new[1]*cm_ex[1] >= 0: #same sign  
+              dist=(((cm_new[1]-cm_ex[1])*lon2km_coeff)**2 + ((cm_new[0]-cm_ex[0])*lat2km_coeff)**2)**0.5
+            if cm_new[1]*cm_ex[1] < 0 and abs(cm_ex[1])<=100: #different sign near 0°lon
+              dist=(((cm_new[1]-cm_ex[1])*lon2km_coeff)**2 + ((cm_new[0]-cm_ex[0])*lat2km_coeff)**2)**0.5
+            if cm_new[1]*cm_ex[1] <= 0 and abs(cm_ex[1])>100 and cm_ex[1] > 0: #different sign->boundary of the domain
+              dist=(((cm_new[1]-cm_ex[1]+360)*lon2km_coeff)**2 + ((cm_new[0]-cm_ex[0])*lat2km_coeff)**2)**0.5
+            if cm_new[1]*cm_ex[1] <= 0 and abs(cm_ex[1])>100 and cm_ex[1] <= 0: #different sign->boundary of the domain
+              dist=(((cm_new[1]-cm_ex[1]-360)*lon2km_coeff)**2 + ((cm_new[0]-cm_ex[0])*lat2km_coeff)**2)**0.5
+          
+          #overlap and max_dist criteria
+          
+          if n > n_ex*overlap and dist < max_dist: #overlap criterium  #or n > n_new*overlap)
             #new label which is always different
             arr[t,:,:] = xr.where(boolarr2,l1,arr[t,:,:])
         if diff > 1:
@@ -563,11 +609,12 @@ def ContourTracking2D(dataset,var_name = "DAV",geop_name='zg',overlap=0.5,save_t
   for l in idxs:
     dic[l]['persistence'] = 0
     dic[l]['area'] = []
-    dic[l]['aspect_ratio'] = []
     dic[l]['distance_traveled'] = []
     dic[l]['track'] = []
     dic[l]['date'] = ''
     dic[l]['intensity'] = []
+    dic[l]['WBI'] = []
+
   print('calculating characteristics')
   print('persistence, track, date:')
   #PERSISTENCE MODULE
@@ -580,40 +627,38 @@ def ContourTracking2D(dataset,var_name = "DAV",geop_name='zg',overlap=0.5,save_t
       dic[l]['persistence'] += 1
       if l not in past_events:
         past_events.append(l)
-        if save_track == True:
-          #100 is a safe value for making the algorithm a little more efficient, as there is no event longer than 100 days.
-          dic[l]['track'] = CenterofMass(arr[t:min([t+100,len_time]),:,:],l,grid=2.5) #center of mass traj
-          ys,xs = dic[l]['track']
-          dist = []
-          for i in range(len(xs)-1):
-            lon2km_coeff = np.cos(np.deg2rad(np.mean([ys[i+1],ys[i]])))*111.320
-            lat2km_coeff = 110.574
-            if xs[i+1]*xs[i] >= 0: #same sign  
-              dist.append((((xs[i+1]-xs[i])*lon2km_coeff)**2 + ((ys[i+1]-ys[i])*lat2km_coeff)**2)**0.5)
-            if xs[i+1]*xs[i] < 0 and abs(xs[i])<=100: #different sign near 0°lon
-              dist.append((((xs[i+1]-xs[i])*lon2km_coeff)**2 + ((ys[i+1]-ys[i])*lat2km_coeff)**2)**0.5)
-            if xs[i+1]*xs[i] <= 0 and abs(xs[i])>100 and xs[i] > 0: #different sign->boundary of the domain
-              dist.append((((xs[i+1]-xs[i]+360)*lon2km_coeff)**2 + ((ys[i+1]-ys[i])*lat2km_coeff)**2)**0.5)
-            if xs[i+1]*xs[i] <= 0 and abs(xs[i])>100 and xs[i] <= 0: #different sign->boundary of the domain
-              dist.append((((xs[i+1]-xs[i]-360)*lon2km_coeff)**2 + ((ys[i+1]-ys[i])*lat2km_coeff)**2)**0.5)
-          dic[l]['distance_traveled'] = dist
-          dic[l]['date'] = times[t]
-          dic[l]['time'] = t
+        #100 is a safe value for making the algorithm a little more efficient, as there is no event longer than 100 days.
+        dic[l]['track'] = CenterofMass(arr[t:min([t+100,len_time]),:,:],l,grid=2.5) #center of mass traj
+        ys,xs = dic[l]['track']
+        dist = []
+        for i in range(len(xs)-1):
+          lon2km_coeff = np.cos(np.deg2rad(np.mean([ys[i+1],ys[i]])))*111.320
+          lat2km_coeff = 110.574
+          if xs[i+1]*xs[i] >= 0: #same sign  
+            dist.append((((xs[i+1]-xs[i])*lon2km_coeff)**2 + ((ys[i+1]-ys[i])*lat2km_coeff)**2)**0.5)
+          if xs[i+1]*xs[i] < 0 and abs(xs[i])<=100: #different sign near 0°lon
+            dist.append((((xs[i+1]-xs[i])*lon2km_coeff)**2 + ((ys[i+1]-ys[i])*lat2km_coeff)**2)**0.5)
+          if xs[i+1]*xs[i] <= 0 and abs(xs[i])>100 and xs[i] > 0: #different sign->boundary of the domain
+            dist.append((((xs[i+1]-xs[i]+360)*lon2km_coeff)**2 + ((ys[i+1]-ys[i])*lat2km_coeff)**2)**0.5)
+          if xs[i+1]*xs[i] <= 0 and abs(xs[i])>100 and xs[i] <= 0: #different sign->boundary of the domain
+            dist.append((((xs[i+1]-xs[i]-360)*lon2km_coeff)**2 + ((ys[i+1]-ys[i])*lat2km_coeff)**2)**0.5)
+        dic[l]['distance_traveled'] = dist
+        dic[l]['date'] = times[t]
+        dic[l]['time'] = t
 
-  print('area, intensity and longitudinal extent')
+  print('area, WBI and intensity')
   #AREA and LONGITUDINAL EXTENT MODULE
   for t in tqdm(range(len_time)):
     bool = arr[t,:,:] > 0
-    today_events = np.unique(arr[t,bool]).astype(int)       #remove '0' from the list
+    today_events = np.unique(arr[t,bool]).astype(int)#remove '0' from the list
     for l in today_events:
       boolarr = arr[t,:,:] == l
-      area,lon_ext,lat_ext = Area(boolarr)
-      if save_intesity==True:
-        #the intensity is computed through the average anomaly associated to the blocked grid cells.
-        an_tmp = abs(np.reshape(zg[t,:,:]-zg_clim,boolarr.shape))
-        dic[l]['intensity'].append(np.sum(an_tmp[boolarr])/(len(an_tmp[boolarr])))
-      #updating aspect_ratio
-      dic[l]['aspect_ratio'].append((lon_ext/lat_ext))
+      area = Area(boolarr)
+      WBI = np.roll((np.roll(zg[t,:,:],int(7.5/grid),axis=1)-np.roll(zg[t,:,:],-int(7.5/grid),axis=1)),int(7.5/grid),axis=0)/(-15)
+      dic[l]['WBI'].append(np.sum(WBI[boolarr])/np.sum(boolarr.flatten()))
+      #the intensity is computed through the integrated anomaly associated to the blocked grid cells.
+      an_tmp = zg[t,:,:]-zg_rollmean[t,:,:]
+      dic[l]['intensity'].append(np.sum(an_tmp[boolarr])/np.sum(boolarr.flatten()))
       #updating area
       dic[l]['area'].append(area)
       
@@ -650,7 +695,6 @@ dataset: input dataset that must be the output ContourTracking2D, Xarray Dataset
 var_name: the name of the variable contained inside of the dataset ('DAV', 'GHA' or 'LWAA'), String
 pers_min: the minimum persistence that a blocking event must have, Int
 min_avg_area: the minimum area of a blocking event in km^2, Float
-max_dist: the maximum per day distance traveled by a blocking event in km, Float
 
 Returns:
 dataset: the fitered input dataset
@@ -658,7 +702,7 @@ dic: the filtered input dictionary
 '''
 
 def FilterEvents(ds,dic,var_name = "DAV",
-                 pers_min = 5,min_avg_area = 500000,max_dist=1000):
+                 pers_min = 5,min_avg_area = 500000):
 
   print("__Starting a Filtering process__")
   print("input: " + var_name + "_tracked")
@@ -673,93 +717,22 @@ def FilterEvents(ds,dic,var_name = "DAV",
 
   print('applying filters')
   to_retain = []
-  label_check = 12
-  counter = 0
-  counter_left = 0
-  counter_right = 0
+  l = 1
+  for event in tqdm(dic[1:]): #skip the first empty element
+    if event['persistence'] < pers_min or sum(event['area'])/len(event['area']) < min_avg_area:
+        ti = event['time']
+        tf = event['time'] + event['persistence']
+        arr[ti:tf,:,:] = np.where(arr[ti:tf,:,:]==l,0,arr[ti:tf,:,:])
+    else:
+      to_retain.append(l)
+    l+=1 #didn't use enumerate to use the progress bar.
 
-  for l in tqdm(range(1,len(dic))):#skip the first empty element
-    #max distance filter: if the event moves too much only the steady part of the event is retained.
-    #iterate this part multiple times to select only the stationary part of the event.
-    for m in range(50): #50 is a sufficient number of iterations
-      check = False
-      day = 1
-      for dist in dic[l]['distance_traveled']:
-        if dist > max_dist:
-          check = True
-          break
-        day += 1
-          
-      if check:
-        counter += 1   
-        #if counter == label_check:
-        #  print(dic[l])
-        if day > dic[l]['persistence']/2:
-          ti = dic[l]['time'] + day
-          tf = dic[l]['time'] + dic[l]['persistence']        
-          #remove the second part of the dic[l]
-          arr[ti:tf,:,:] = np.where(arr[ti:tf,:,:]==(l),0,arr[ti:tf,:,:])          
-          counter_left +=1 
-          #update dictionary
-          dic[l]['persistence'] = day
-          dic[l]['area'] = dic[l]['area'][:day]
-          dic[l]['aspect_ratio'] = dic[l]['aspect_ratio'][:day]
-          dic[l]['distance_traveled'] = dic[l]['distance_traveled'][:(day-1)]
-          dic[l]['track'][0] = dic[l]['track'][0][:day]
-          dic[l]['track'][1] = dic[l]['track'][1][:day]
-          dic[l]['intensity'] = dic[l]['intensity'][:day]
-          #dic[l]['old_label'] = l
-  
-        if day <= dic[l]['persistence']/2:
-          ti = dic[l]['time'] 
-          tf = dic[l]['time'] + day
-          #remove the first part of the dic[l]
-          arr[ti:tf,:,:] = np.where(arr[ti:tf,:,:]==(l),0,arr[ti:tf,:,:])  
-          counter_right +=1 
-          #update dictionary
-          dic[l]['persistence'] = dic[l]['persistence'] - day
-          dic[l]['area'] = dic[l]['area'][day:]
-          dic[l]['aspect_ratio'] = dic[l]['aspect_ratio'][day:]
-          dic[l]['distance_traveled'] = dic[l]['distance_traveled'][(day-1):]
-          dic[l]['track'][0] = dic[l]['track'][0][day:]
-          dic[l]['track'][1] = dic[l]['track'][1][day:]
-          dic[l]['intensity'] = dic[l]['intensity'][day:]
-          dic[l]['time'] = dic[l]['time'] + day
-          dic[l]['date'] = dic[l]['date'] + np.timedelta64(day,'D')
-          
-      if dic[l]['persistence'] >= pers_min and sum(dic[l]['area'])/len(dic[l]['area']) >= min_avg_area:
-        to_retain.append(l)      
-      else:
-        ti = dic[l]['time']
-        tf = dic[l]['time'] + dic[l]['persistence']
-        arr[ti:tf,:,:] = np.where(arr[ti:tf,:,:]==l,0,arr[ti:tf,:,:])   
-      #if counter == label_check and check:
-      #  print(dic[l])
-      #  print(l in to_retain)
-      
   #update the dictionary
   dic_filtered = []
   dic_filtered.append({})
-  examined_labels = []
-  print('creating new dictionary')
-  for t in tqdm(range(len(arr[:,0,0]))):
-    labels = np.unique(arr[t,:,:])
-    for lab in labels:
-      if lab != 0 and lab in to_retain and lab not in examined_labels:
-        dic_filtered.append(dic[lab])
-        if any(x>max_dist for x in dic[lab]['distance_traveled']):
-          print(dic[lab]['distance_traveled'])
-        examined_labels.append(lab)
-  #print(len(to_retain))
-  #print(len(examined_labels))
-  #print(len(dic_filtered))
-  #for l,event in enumerate(dic):
-  #  if l in to_retain:
-  #    dic_filtered.append(event)
-
-  print('number of splitted event:' + str(counter))
-  print('number of splitted event (left):' + str(counter_left))
-  print('number of splitted event (right):' + str(counter_right))
+  for l,event in enumerate(dic):
+    if l in to_retain:
+      dic_filtered.append(event)
 
   print('rearranging indexes')
   arr = OrderIndexes(arr)
