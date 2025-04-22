@@ -653,7 +653,7 @@ def ContourTracking2D(dataset,var_name = "DAV",geop_name='zg',overlap=0.5,max_di
     today_events = np.unique(arr[t,bool]).astype(int)#remove '0' from the list
     for l in today_events:
       boolarr = arr[t,:,:] == l
-      area = Area(boolarr)
+      area = Area(boolarr,grid=grid)
       WBI = np.roll((np.roll(zg[t,:,:],int(7.5/grid),axis=1)-np.roll(zg[t,:,:],-int(7.5/grid),axis=1)),int(7.5/grid),axis=0)/(-15)
       dic[l]['WBI'].append(np.sum(WBI[boolarr])/np.sum(boolarr.flatten()))
       #the intensity is computed through the integrated anomaly associated to the blocked grid cells.
@@ -748,16 +748,17 @@ def FilterEvents(ds,dic,var_name = "DAV",
   DAV_tracked = xr.DataArray(0,coords=[times,lat,lon],dims = pIB_boolean.dims)
   DAV_tracked[:,:,:] = arr
 
+  ds_new = ds.copy()
   #assign new data_array to dataset
-  ds[var_name+"_tracked"] = DAV_tracked
+  ds_new[var_name+"_tracked"] = DAV_tracked
   
   """
   Update DAV_freq (if present) after area and persistence filter are applied.
   """
-  ds[var_name + "_freq"] = xr.where(ds[var_name+"_tracked"]>0,1,0).mean(dim="time")*100
+  ds_new[var_name + "_freq"] = xr.where(ds[var_name+"_tracked"]>0,1,0).mean(dim="time")*100
 
   #output data
-  return ds,dic_filtered
+  return ds_new,dic_filtered
 
 
 
