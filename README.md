@@ -29,7 +29,7 @@ We also implemented two additional indices that use as input variable the local 
 For further details see the comments in blocktoolbox.py
 
 The output has the same dimensions and characteristics of the input dataset, but a series of additional variables are included:
-- A boolean matrix with the same dimensions at the geopotential height field named as the adopted blocking index (DAV, GHA, LWAA ...) that is 1 for blocked grid points and 0 for unblocked grid points.
+- A boolean matrix with the same dimensions of the geopotential height field named as the adopted blocking index (DAV, GHA, LWAA ...) that is 1 for blocked grid points and 0 for unblocked grid points.
 - A similar matrix named as the adopted blocking index plus the desinence [...]_tracked that is similar to the previous but instead of 1 it contains a integer label that is different for each blocking event.
 - A matrix named named as the adopted blocking index plus the desinence [...]_freq that is the frequency of blocking in the Northern Hemisphere.
 
