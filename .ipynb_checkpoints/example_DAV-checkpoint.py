@@ -10,25 +10,26 @@ start_time = time.time()
 
 print("Starting operation")
 
-data_dir='/archive/michele/data/ERA5/'
+data_dir='/archive/michele/data/ERA5/' #data directory
 fn = data_dir + "ERA5_northem_2.5x2.5_zg_daily_1959-2021.nc"
-work_dir='/home/michele/DATA/blocktrack_debug/'
+work_dir='/home/michele/DATA/blocktrack_debug/' #output directory
 fn_out_unfilt = work_dir + "ERA5_northem_2.5x2.5_zg_DAV_tracked_unfilt_daily_1940-2023.nc"
 fn_out = work_dir + "ERA5_northem_2.5x2.5_zg_DAV_tracked_daily_1940-2023.nc"
-fn_dic_unfilt = work_dir + "dictionaries/ERA5_northem_2.5x2.5_zg_DAV_tracked_unfilt_daily_1940-2023_DIC.npy"
+#dictionaries for saving the tracking data. Here we create a separated directory to avoid confusion.
+fn_dic_unfilt = work_dir + "dictionaries/ERA5_northem_2.5x2.5_zg_DAV_tracked_unfilt_daily_1940-2023_DIC.npy" 
 fn_dic = work_dir + "dictionaries/ERA5_northem_2.5x2.5_zg_DAV_tracked_daily_1940-2023_DIC.npy"
 
-ds = xr.load_dataset(fn)
+ds = xr.open_dataset(fn)
 print("Data correctly read")
-ds = BT.DAV(ds,mer_gradient_filter = True)
+ds = bt.DAV(ds,mer_gradient_filter = True)
 print(np.amax(ds['DAV_freq']))
 print("DAV function correctly executed")
-ds,dic_unfilt = BT.ContourTracking2D(ds)
+ds,dic_unfilt = bt.ContourTracking2D(ds,grid=2.5)
 #saving temporary data
 ds.to_netcdf(fn_out_unfilt)
 np.save(fn_dic_unfilt,dic_unfilt)
-ds,dic_filt = BT.FilterEvents(ds,dic_unfilt,
-                              pers_min = 5,min_area = 5e5,max_avg_dist=1000)
+ds,dic_filt = bt.FilterEvents(ds,dic_unfilt,var_name = 'DAV',
+                              pers_min = 5,min_avg_area = 500000)
 print("ContourTracking2D function correclty executed")
 #saving data
 np.save(fn_dic,dic_filt)

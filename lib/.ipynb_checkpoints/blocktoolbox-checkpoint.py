@@ -15,47 +15,25 @@ import xarray as xr
 from scipy.ndimage.measurements import label
 from scipy.ndimage.measurements import center_of_mass
 from tqdm import tqdm
-import matplotlib.pyplot as plt
-import cartopy.util as cutil
 import sys
 import math
 
-#np.set_printoptions(precision=2,threshold=np.inf)
-
-'''
-
-Area: this method calculate the area of a portion of a matrix in km^2.The portion of the matrix is given as a boolean array which is True 
-where the area has to be calculated. lons and lats lists define the boundaries of the original array grid defines the dimension of a grid point.
-! note that the array is (lat,lon)
-
-Inputs:
-boolarr: Portion of the matrix, Boolean Numpy Array
-lats: Latitudinal boundaries of the boolarr, List
-lons: Longitudinal boundaries of the boolarr, List
-grid: grid dimension needed to convert the index in latitudes and longitudes, Float
-
-Returns:
-Area: The area of the given region expressed in km^2, Float
-lon_ext: The longitudinal extent of the given region expressed in km^2, Float
-lat_ext: The latitudinal extent of the given region expressed in km^2, Float
-
-'''
-
 def Deseasonalize(data_arr):
-  #compute monthly mean
+  #remove the seasonality of the data by removing the monthly mean
   seasonal_mean = data_arr.groupby('time.dayofyear').mean(dim='time')
   total_mean = data_arr.mean(dim='time')
   deseasonalized_data_arr = data_arr.groupby('time.dayofyear') - seasonal_mean + total_mean
   return deseasonalized_data_arr
 
 def Detrend(da, dim='time', deg=1):
-  # detrend along a single dimension
+  # detrend along a single dimension using a linear regression
   p = da.polyfit(dim=dim, deg=deg)
   fit = xr.polyval(da[dim], p.polyfit_coefficients)
   mean = da.mean(dim)
   return da - fit + mean
 
 def Rolling_mean(data_arr):
+  #compute the rolling mean
   rolling_mean = data_arr.rolling(time=90, center=True, min_periods=1).mean()
   return rolling_mean
 
@@ -66,7 +44,7 @@ def Area(boolarr,lat_lim=[0,90],lon_lim=[-180,180],grid=2.5):
   #where the area has to be calculated.
   #lon_lim and lat_lim lists define the boundaries of the original array
   #grid defines the dimension of a grid point.
-  #! note that the array isn't (lon,lat) but (lat,lon) instead
+  #! note that the array's dimensions order is (lat,lon)
   area = 0
   
   lon_len = len(boolarr[0,:])
@@ -110,8 +88,7 @@ def OrderIndexes(arr):
   return arr
 
 '''
-CenterofMass: This function is based on the homonym scipy function and returns a list of xs (longitudes) and ys (latitudes) that are the center of mass
-coordinates for each time-step of the dataset.
+CenterofMass: This function is based on the homonym scipy function and returns a list of xs (longitudes) and ys (latitudes) that are the center of mass coordinates for each time-step of the dataset.
 NOTE: this method doesn't consider the sphericity of Earth, so the center of mass results slightly displaced north from its actual position.
 
 Inputs:
@@ -196,7 +173,8 @@ dataset: the input dataset + the matrix defining the blocked grid points
 
 def DAV(dataset,
         mer_gradient_filter = False,
-        tyrlis_correction = False
+        tyrlis_correction = False,
+        var_name = 'zg'
         ):
   
   print("__Starting a DAV process__")
@@ -204,7 +182,7 @@ def DAV(dataset,
   
   #checking if dataset is right
   try:
-    zg = dataset["zg"]
+    zg = dataset[var_name]
     string = "data successfully received"
   except:
     string = "zg variable was not found. Hint: check the content of your dataset."
@@ -273,7 +251,9 @@ dataset: the input dataset + the matrix defining the blocked grid points
 '''
 
 def GHA(dataset,
-        multiplicative_threshold = 1.26, 
+        multiplicative_threshold = 1.26,
+        var_name = 'zg',
+        ref_std = 0
         ):
   print("__Starting a GHA process__")
   print("input: zg500 , multiplicative threshold = " + str(multiplicative_threshold))
@@ -282,7 +262,7 @@ def GHA(dataset,
   #checking if dataset is right
   
   try:
-    zg = dataset["zg"]
+    zg = dataset[var_name]
     string = "data successfully received"
   except:
     string = "zg variable was not found. Hint: check the content of your dataset."
@@ -303,7 +283,7 @@ def GHA(dataset,
   zg_reduced=zg.loc[:,bound_down:bound_up,:].values
   gha_reduced=np.zeros(zg_reduced.shape)
   #define the domain of the reference distribution.
-  zg_ref=zg.loc[:,45:80,:].values
+  zg_ref=zg.loc[:,bound_down:bound_up,:].values
   zg = zg.values
   
   for t in tqdm(range(45,len(times)-45)):
@@ -311,7 +291,8 @@ def GHA(dataset,
     anomalies = zg_reduced[t,:,:] - np.mean(zg_reduced[t-45:t+45,:,:],axis=0)
     #compute the reference anomaly distribution for the three months period
     anomalies_ref = zg_ref[t-45:t+45,:,:] - np.repeat(np.expand_dims(np.mean(zg_ref[t-45:t+45,:,:],axis=0),axis=0),90,axis=0)
-    ref_std = np.std(anomalies_ref,axis=(0,1,2))
+    if ref_std == 0:
+      ref_std = np.std(anomalies_ref,axis=(0,1,2))
     #compare the anomalies at time t with the reference distribution.
     gha_reduced[t,:,:] = np.where(anomalies>multiplicative_threshold*ref_std,1,0)
     
@@ -412,7 +393,9 @@ dataset: the input dataset + the matrix defining the blocked grid points
 '''
 
 def LWAA(dataset,
-        multiplicative_threshold = 1.26, 
+        multiplicative_threshold = 1.26,
+        lwa_name = 'lwa',
+        ref_std = 0
         ):
   print("__Starting a LWA anomaly process__")
   print("input: zg500 , multiplicative threshold = " + str(multiplicative_threshold))
@@ -422,13 +405,17 @@ def LWAA(dataset,
   
   try:
   #add sign - to keep computatoins similar to zg
-    lwa = - dataset["lwa"]
+    if dataset[lwa_name].mean() > 0:
+      lwa = dataset[lwa_name]
+    if dataset[lwa_name].mean() <= 0:
+      lwa = - dataset[lwa_name]
+      print('lwa sign changed')
     string = "data successfully received"
   except:
     string = "lwa variable was not found. Hint: check the content of your dataset."
     print(string)
     return 0
-
+  print(lwa.shape)
   #define XArray using the costructor for an appropriate output
   times = lwa.coords["time"]
   lon = lwa.coords["lon"]
@@ -439,18 +426,77 @@ def LWAA(dataset,
   lwa_reduced=lwa.loc[:,bound_down:bound_up,:].values
   lwaa_reduced=np.zeros(lwa_reduced.shape)
   #define the domain of the reference distribution.
-  lwa_ref=lwa.loc[:,45:80,:].values
+  if ref_std == 0:
+    print('ref_std automatically computed')
+    lwa_ref=lwa.loc[:,45:80,:].values
+    ref_std = lwa_ref.std()
   lwa = lwa.values
   
   for t in tqdm(range(45,len(times)-45)):
     #compute the anomalies with respect to a three months period for the index domain
     anomalies = lwa_reduced[t,:,:] - np.mean(lwa_reduced[t-45:t+45,:,:],axis=0)
-    #compute the reference anomaly distribution for the three months period
-    anomalies_ref = lwa_ref[t-45:t+45,:,:] - np.repeat(np.expand_dims(np.mean(lwa_ref[t-45:t+45,:,:],axis=0),axis=0),90,axis=0)
-    ref_mean = np.mean(anomalies_ref,axis=(0,1,2))
-    ref_std = np.std(anomalies_ref,axis=(0,1,2))
     #compare the anomalies at time t with the reference distribution.
-    lwaa_reduced[t,:,:] = np.where(anomalies-ref_mean>multiplicative_threshold*ref_std,1,0)
+    lwaa_reduced[t,:,:] = np.where(anomalies>multiplicative_threshold*ref_std,1,0)
+    
+  lwaa = xr.DataArray(data=np.zeros(lwa.shape), 
+                     dims=["time","lat","lon"],
+                     coords = dict(time=dataset["time"],lat=dataset["lat"],lon=dataset["lon"]))
+  lwaa.loc[:,bound_down:bound_up,:] = lwaa_reduced
+  dataset = dataset.assign(LWAA=lwaa)
+  
+  lwaa_freq = sum(lwaa)*100/lwaa.values.shape[0]
+  dataset = dataset.assign(LWAA_freq = lwaa_freq)
+  return dataset
+
+
+'''
+LWAA_2: This is a simpler implementation than LWAA inspired to Barpanda et al. 2024. A grid point is identified 
+as blocked when lwa exceeds a certain value (60ms-1 in litterature). The blocked grid points are marked with a '1' 
+boolean value in a matrix with the same dimensions as the lwa that is '0' everywhere else. The matrix is stored in 
+a copy dataset of the input dataset, which is then given as an output.
+
+Inputs:
+dataset: input dataset that must contain the daily Local Wave Activity in the area [-180,180]°lon [0,90]°lat. The rank of
+the input data must be 2, Xarray Dataset
+lwa_threshold: the lwa threshold 
+
+Returns:
+dataset: the input dataset + the matrix defining the blocked grid points
+'''
+
+def LWAA_2(dataset,
+        lwa_threshold = 60,
+        lwa_name = 'lwa',
+        ):
+  print("__Starting a LWA anomaly process__")
+  print("input: " +lwa_name)
+  bound_up=80
+  bound_down=30
+  #checking if dataset is right
+  
+  try:
+  #add sign - to keep computatoins similar to zg
+    if dataset[lwa_name].mean() > 0:
+      lwa = dataset[lwa_name]
+    if dataset[lwa_name].mean() <= 0:
+      lwa = - dataset[lwa_name]
+      print('lwa sign changed')
+    string = "data successfully received"
+  except:
+    string = "lwa variable was not found. Hint: check the content of your dataset."
+    print(string)
+    return 0
+  print(lwa.shape)
+  #define XArray using the costructor for an appropriate output
+  times = lwa.coords["time"]
+  lon = lwa.coords["lon"]
+  lat = lwa.coords["lat"]
+
+  #define lwa and LWAA in the index domain.
+  #converting everything to numpy array to optimize computational expense.
+  lwa_reduced=lwa.loc[:,bound_down:bound_up,:].values
+  #creating boolean np array
+  lwaa_reduced = np.where(lwa_reduced>lwa_threshold,1,0)
     
   lwaa = xr.DataArray(data=np.zeros(lwa.shape), 
                      dims=["time","lat","lon"],
@@ -493,7 +539,7 @@ dic[event_label]:
 '''
 
 
-def ContourTracking2D(dataset,var_name = "DAV",geop_name='zg',overlap=0.5,max_dist=1400,grid=2.5):
+def ContourTracking2D(dataset,var_name = "DAV",geop_name='zg',overlap=0.5,grid=None):
   pIB_boolean = dataset[var_name]
   zg = dataset[geop_name]
   if zg.values[0,0,0] > 10000:
@@ -512,18 +558,18 @@ def ContourTracking2D(dataset,var_name = "DAV",geop_name='zg',overlap=0.5,max_di
 
   #loop over time
   #initialize some varaibles
-  max = 0
+  max_val = 0
   times = dataset.time.values
   #store the lat and lon dimensions for later computations.
   #more robust than arr.shape, as the order of coordinates may vary
-  lastlat = len(dataset.lat.values) -1
-  lastlon = len(dataset.lon.values) -1
+  lastlat = len(dataset.lat.values) - 1
+  lastlon = len(dataset.lon.values) - 1
   print("connected component analysis")
   for t in tqdm(range(len(times))):
     if t > 0:
-      tmp = np.amax(arr[t-1,:,:])
-      if max < tmp: #update maximum value in matrix
-        max = tmp
+      tmp = np.amax(arr[ t-1 ,:,:])
+      if max_val < tmp: #update maximum value in matrix
+        max_val = tmp
     #label method from scipy.ndimage.measurements is used
     structure = [[0,1,0],\
                  [1,1,1],\
@@ -531,10 +577,10 @@ def ContourTracking2D(dataset,var_name = "DAV",geop_name='zg',overlap=0.5,max_di
 
     #neighbour points are labeled with the same sequential number
     arr[t,:,:],ncomponents=label(arr[t,:,:],structure)
-    arr[t,:,:] = xr.where(arr[t,:,:] > 0, arr[t,:,:] + max , arr[t,:,:])
+    arr[t,:,:] = xr.where(arr[t,:,:] > 0, arr[t,:,:] + max_val , arr[t,:,:])
 
     #making it periodic in longitude
-    for j in range(0,lastlat):
+    for j in range(0,lastlat+1):
       if arr[t,j,lastlon] > 0 and arr[t,j,0] > 0:
         arr[t,:,:] = np.where(arr[t,:,:] == arr[t,j,lastlon], arr[t,j,0], arr[t,:,:])
 
@@ -554,35 +600,19 @@ def ContourTracking2D(dataset,var_name = "DAV",geop_name='zg',overlap=0.5,max_di
       for l1 in comp1:
         boolarr1 = arr[t-1,:,:] == l1
         for l2 in comp2:
-          #first we use a filter for avoiding lagrangian tracking between distant days
+          #first we use a filter for avoiding lagrangian tracking between distant days when the dataset is not continuous
           if diff > 1:
             break
-          #then we find link between clusters
+            
+          #then we find links between clusters from subsequent days
           boolarr2 = arr[t,:,:] == l2
           boolarr = boolarr1*boolarr2
           n = np.count_nonzero(boolarr)
           n_ex = np.count_nonzero(boolarr1)
           n_new = np.count_nonzero(boolarr2)
-
-          #dist_module
-          dist = 0
-          if n > 0:
-            cm_ex = CenterofMass_singleday(boolarr1)
-            cm_new = CenterofMass_singleday(boolarr2)
-            lon2km_coeff = np.cos(np.deg2rad(np.mean([cm_new[0],cm_ex[0]])))*111.320
-            lat2km_coeff = 110.574
-            if cm_new[1]*cm_ex[1] >= 0: #same sign  
-              dist=(((cm_new[1]-cm_ex[1])*lon2km_coeff)**2 + ((cm_new[0]-cm_ex[0])*lat2km_coeff)**2)**0.5
-            if cm_new[1]*cm_ex[1] < 0 and abs(cm_ex[1])<=100: #different sign near 0°lon
-              dist=(((cm_new[1]-cm_ex[1])*lon2km_coeff)**2 + ((cm_new[0]-cm_ex[0])*lat2km_coeff)**2)**0.5
-            if cm_new[1]*cm_ex[1] <= 0 and abs(cm_ex[1])>100 and cm_ex[1] > 0: #different sign->boundary of the domain
-              dist=(((cm_new[1]-cm_ex[1]+360)*lon2km_coeff)**2 + ((cm_new[0]-cm_ex[0])*lat2km_coeff)**2)**0.5
-            if cm_new[1]*cm_ex[1] <= 0 and abs(cm_ex[1])>100 and cm_ex[1] <= 0: #different sign->boundary of the domain
-              dist=(((cm_new[1]-cm_ex[1]-360)*lon2km_coeff)**2 + ((cm_new[0]-cm_ex[0])*lat2km_coeff)**2)**0.5
           
-          #overlap and max_dist criteria
-          
-          if n > n_ex*overlap and dist < max_dist: #overlap criterium  #or n > n_new*overlap)
+          #overlap criteria
+          if n > n_ex*overlap: #overlap criterium
             #new label which is always different
             arr[t,:,:] = xr.where(boolarr2,l1,arr[t,:,:])
         if diff > 1:
@@ -627,21 +657,25 @@ def ContourTracking2D(dataset,var_name = "DAV",geop_name='zg',overlap=0.5,max_di
       dic[l]['persistence'] += 1
       if l not in past_events:
         past_events.append(l)
-        #100 is a safe value for making the algorithm a little more efficient, as there is no event longer than 100 days.
-        dic[l]['track'] = CenterofMass(arr[t:min([t+100,len_time]),:,:],l,grid=2.5) #center of mass traj
+        
+        #100 is a safe value for making the algorithm a little more efficient, as there is probably no event longer than 100 days.
+        dic[l]['track'] = CenterofMass(arr[t:min([t+100,len_time]),:,:],l,grid=grid) #center of mass traj
         ys,xs = dic[l]['track']
         dist = []
+
+        #the distance computation is not perfect. If an event travels more than 90° in longitude, the distance may not be computed correctly.
         for i in range(len(xs)-1):
           lon2km_coeff = np.cos(np.deg2rad(np.mean([ys[i+1],ys[i]])))*111.320
           lat2km_coeff = 110.574
-          if xs[i+1]*xs[i] >= 0: #same sign  
+          if xs[i+1]*xs[i] >= 0: # same sign  
             dist.append((((xs[i+1]-xs[i])*lon2km_coeff)**2 + ((ys[i+1]-ys[i])*lat2km_coeff)**2)**0.5)
-          if xs[i+1]*xs[i] < 0 and abs(xs[i])<=100: #different sign near 0°lon
+          if xs[i+1]*xs[i] < 0 and abs(xs[i])<=100: # different sign near 0°lon
             dist.append((((xs[i+1]-xs[i])*lon2km_coeff)**2 + ((ys[i+1]-ys[i])*lat2km_coeff)**2)**0.5)
-          if xs[i+1]*xs[i] <= 0 and abs(xs[i])>100 and xs[i] > 0: #different sign->boundary of the domain
-            dist.append((((xs[i+1]-xs[i]+360)*lon2km_coeff)**2 + ((ys[i+1]-ys[i])*lat2km_coeff)**2)**0.5)
-          if xs[i+1]*xs[i] <= 0 and abs(xs[i])>100 and xs[i] <= 0: #different sign->boundary of the domain
-            dist.append((((xs[i+1]-xs[i]-360)*lon2km_coeff)**2 + ((ys[i+1]-ys[i])*lat2km_coeff)**2)**0.5)
+          if xs[i+1]*xs[i] <= 0 and xs[i] > 90: # different sign -> right boundary of the domain
+            dist.append((((xs[i+1]-(xs[i]-360))*lon2km_coeff)**2 + ((ys[i+1]-ys[i])*lat2km_coeff)**2)**0.5)
+          if xs[i+1]*xs[i] <= 0 and xs[i] < -90: # different sign -> left boundary of the domain
+            dist.append((((xs[i+1]-(xs[i]+360))*lon2km_coeff)**2 + ((ys[i+1]-ys[i])*lat2km_coeff)**2)**0.5)
+        
         dic[l]['distance_traveled'] = dist
         dic[l]['date'] = times[t]
         dic[l]['time'] = t
@@ -654,9 +688,12 @@ def ContourTracking2D(dataset,var_name = "DAV",geop_name='zg',overlap=0.5,max_di
     for l in today_events:
       boolarr = arr[t,:,:] == l
       area = Area(boolarr,grid=grid)
+      #the WBI is computed following Davini 2012.
       WBI = np.roll((np.roll(zg[t,:,:],int(7.5/grid),axis=1)-np.roll(zg[t,:,:],-int(7.5/grid),axis=1)),int(7.5/grid),axis=0)/(-15)
+      #we average the WBI across the blocking area.
       dic[l]['WBI'].append(np.sum(WBI[boolarr])/np.sum(boolarr.flatten()))
-      #the intensity is computed through the integrated anomaly associated to the blocked grid cells.
+      #the intensity is computed through the integrated anomaly associated to the blocked grid cells. 
+      #the anomaly is computed with respect to a 90-day rolling mean to remove seasonality.
       an_tmp = zg[t,:,:]-zg_rollmean[t,:,:]
       dic[l]['intensity'].append(np.sum(an_tmp[boolarr])/np.sum(boolarr.flatten()))
       #updating area
@@ -708,7 +745,7 @@ def FilterEvents(ds,dic,var_name = "DAV",
   print("input: " + var_name + "_tracked")
 
   try:
-    pIB_boolean = ds[var_name + "_tracked"]
+    pIB_boolean = ds[var_name + "_tracked"].copy()
     #initialize the array for performing the tracking
     arr = pIB_boolean.values
   except:
@@ -738,6 +775,7 @@ def FilterEvents(ds,dic,var_name = "DAV",
   arr = OrderIndexes(arr)
 
   print("number of labels: " + str(np.amax(arr)))
+  print(len(to_retain))
 
   #initialize coords for new .nc
   times = ds["time"].values
@@ -755,7 +793,7 @@ def FilterEvents(ds,dic,var_name = "DAV",
   """
   Update DAV_freq (if present) after area and persistence filter are applied.
   """
-  ds_new[var_name + "_freq"] = xr.where(ds[var_name+"_tracked"]>0,1,0).mean(dim="time")*100
+  ds_new[var_name + "_freq"] = xr.where(ds_new[var_name+"_tracked"]>0,1,0).mean(dim="time")*100
 
   #output data
   return ds_new,dic_filtered
